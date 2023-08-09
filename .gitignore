@@ -1,0 +1,4 @@
+*.blend
+meshes/
+.vscode
+__pycache__
