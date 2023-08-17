@@ -18,18 +18,27 @@ def render_point_cloud(point_cloud, focal_length, image_width, image_height):
 
     # Apply projection to each point in the point cloud
     for point in point_cloud:
+
+        point1 = point
+
+        # point1 = point + [0,0,2] 
+
         # Perform projection
-        projected_point = [1,focal_length,focal_length]*point 
-        x, y, w = projected_point
+        projected_point = [1,focal_length,focal_length]*point1 
+        x, y, z = projected_point
 
         # Normalize the projected coordinates
-        w = 20*w/x + image_width / 2
-        y = 20*y/x + image_height / 2
+        z = 20*z/x + image_height / 2
+        y = 20*y/x + image_width / 2
+
+        z = image_height - z
+
+        y = image_width - y
 
         # Check if the point is within the image boundaries
-        if 0 <= w < image_width and 0 <= y < image_height:
+        if 0 <= y < image_width and 0 <= z < image_height:
             # Set the pixel at (x, y) to black
-            image[int(y), int(w)] = 0
+            image[int(z), int(y)] = 0
         else:
             z=0
 
@@ -38,12 +47,12 @@ def render_point_cloud(point_cloud, focal_length, image_width, image_height):
 
 if __name__=="__main__":
 
-    image = Image.open(r"C:\DeepLrProject\normals\chair\rotation_75\normals.png")
+    image = Image.open(r"C:\DeepLrProject\normals\chair\rotation_0\normals.png")
 
     # Convert the image to a NumPy array
     image_array = np.array(image)
 
-    point_cloud = np.load(r"C:\DeepLrProject\normals\chair\rotation_75\cloud_0.npy")
+    point_cloud = np.load(r"C:\DeepLrProject\normals\chair\rotation_0\cloud_0.npy")
 
     focal_length = 50  # Adjust according to your needs
     image_width = 960
