@@ -3,7 +3,9 @@ from PIL import Image
 import sys
 import time
 import matcap
-
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 def render_point_cloud(point_cloud, focal_length, image_width, image_height):
     # Define the projection matrix based on camera orientation
@@ -21,8 +23,8 @@ def render_point_cloud(point_cloud, focal_length, image_width, image_height):
         x, y, w = projected_point
 
         # Normalize the projected coordinates
-        w = 1*w/x + image_width / 2
-        y = 1*y/x + image_height / 2
+        w = 20*w/x + image_width / 2
+        y = 20*y/x + image_height / 2
 
         # Check if the point is within the image boundaries
         if 0 <= w < image_width and 0 <= y < image_height:
@@ -36,12 +38,12 @@ def render_point_cloud(point_cloud, focal_length, image_width, image_height):
 
 if __name__=="__main__":
 
-    image = Image.open(r"C:\DeepLrProject\normals\gun\rotation_43\normals.png")
+    image = Image.open(r"C:\DeepLrProject\normals\chair\rotation_75\normals.png")
 
     # Convert the image to a NumPy array
     image_array = np.array(image)
 
-    point_cloud = np.load(r"C:\DeepLrProject\normals\gun\rotation_43\cloud_1.npy")
+    point_cloud = np.load(r"C:\DeepLrProject\normals\chair\rotation_75\cloud_0.npy")
 
     focal_length = 50  # Adjust according to your needs
     image_width = 960
@@ -54,3 +56,23 @@ if __name__=="__main__":
 
     # Now 'image_pil' is a PIL image
     image_pil.show()  # Display the PIL image
+
+    # Create a new figure and add a 3D subplot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Extract X, Y, Z coordinates from the point cloud
+    x = point_cloud[:, 0]
+    y = point_cloud[:, 1]
+    z = point_cloud[:, 2]
+
+    # Create a 3D scatter plot
+    ax.scatter(x, y, z, c='b', marker='o')
+
+    # Set labels for the axes
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+
+    # Show the plot
+    plt.show()
