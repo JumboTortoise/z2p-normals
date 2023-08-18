@@ -74,8 +74,6 @@ def get_image_from_point_cloud(point_cloud, focal_length, image_height, image_wi
 
     return result
 
-
-
 def fix_one_folder(file_in):
 
     focal_length = 50
@@ -91,7 +89,6 @@ def fix_one_folder(file_in):
             point_cloud_image = get_image_from_point_cloud(data, focal_length, image_height, image_width)
 
             np.save(file_path, point_cloud_image)
-
 
 def fix_shape(dir_path):
 
@@ -129,20 +126,29 @@ def draw_fixed_shape(path):
     pil_image.show()
 
 
+# run this with data set dir to procces and render all the shpaes inside for the data loader.
+def fix_data_set(dir_path):
+    # List all subdirectories within the base path
+    subdirectories = [d for d in os.listdir(dir_path) if os.path.isdir(os.path.join(dir_path, d))]
+
+    # Iterate over the subdirectories and call the process_directory function
+    for subdirectory in subdirectories:
+        subdirectory_path = os.path.join(dir_path, subdirectory)
+        fix_shape(subdirectory_path)
+
 if __name__=="__main__":
 
-    shape_dir = r"C:\Users\פישר\Downloads\data_set\chair"
+    # path to your data set, !!!rum this one time only!!!
+    dir = r"C:\data_set"
+    fix_data_set(dir)
+
+
+    # this tou can delete, it just render specific point cloud in the old way and show the picture from certain rotation
     point_cloud_path = r"C:\Users\פישר\Downloads\data_set\chair\rotation_75\cloud_0.npy"
-
-    # fix_shape(shape_dir)
-
     draw_fixed_shape(point_cloud_path)
-
-        # Path to the PNG image
+    # Path to the PNG image
     p = r"C:\Users\פישר\Downloads\data_set\chair\rotation_75\normals.png"
-
     # Open the image using Pillow
     image = Image.open(p)
-
     # Display the image
     image.show()
