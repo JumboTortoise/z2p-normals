@@ -5,9 +5,9 @@ import torch
 
 
 def embed_background(img):
-    backround = torch.ones_like(img)[:, :3, :, :]
-    alpha = img[:, 3, :, :]
-    return backround * (1 - alpha[:, None, :, :]) + img[:, :3, :, :] * alpha[:, None, :, :]
+    backround = torch.ones_like(img)[:, :2, :, :]
+    alpha = img[:, 2, :, :]
+    return backround * (1 - alpha[:, None, :, :]) + img[:, :2, :, :] * alpha[:, None, :, :]
 
 
 def embed_color(img: torch.Tensor, color, box_size=70):

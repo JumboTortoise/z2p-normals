@@ -162,7 +162,7 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
     :return: (torch.Tensor, torch.Tensor) target_image (3XNXM), z_buffer (1XNXM)
     """
     if png_path is not None:
-        img = cv2.imread(str(png_path), cv2.IMREAD_UNCHANGED)
+        img = cv2.imread(str(png_path), cv2.IMREAD_COLOR)
         if img is None:
             return None
 

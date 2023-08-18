@@ -5,9 +5,10 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 
+device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
 def get_data_loader():
 
-    device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
+    
     train_set = data.GenericDataset(r"C:\data_set", splat_size=3, cache=False)
 
     train_loader = DataLoader(train_set, batch_size=4, shuffle=True, num_workers=4, pin_memory=True)
@@ -35,6 +36,8 @@ if __name__=="__main__":
 
     # Display the PIL Image
     tensor_to_pil.show()
+
+    
     
 
 
