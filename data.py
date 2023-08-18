@@ -47,14 +47,14 @@ class Shape:
         :param view_folder: path to view folder
         :return: int number of examples, 0 if 'render.png' not found
         """
-        if not (view_folder / 'render.png').exists():
+        if not (view_folder / 'normals.png').exists():
             return 0
 
         counter = 0
         for npy in view_folder.iterdir():
             spt = npy.name.split('.')
-            all_numbers = all(['0' <= c <= '9' for c in spt[0]])
-            if len(spt) == 2 and all_numbers and spt[1] == 'npy':
+            #all_numbers = all(['0' <= c <= '9' for c in spt[0]])
+            if len(spt) == 2 and spt[1] == 'npy':
                 # yield npy
                 counter += 1
         return counter
@@ -66,7 +66,7 @@ class Shape:
 
         # find views
         for f in self.folder.iterdir():
-            if f.name.startswith('view_'):
+            if f.name.startswith('rotation_'):
                 t_count = Shape.find_npys(f)
                 # if there are examples for this view add the it to shapes valid views
                 if t_count > 0:
@@ -83,12 +83,12 @@ class Shape:
     def __getitem__(self, item):
         # map between global index to a specific example in a specific view
         view_index, item_index = self.inverter[item]
-        return self.views[view_index] / f'render.png', self.views[view_index] / f'{item_index}.npy'
+        return self.views[view_index] / f'normals.png', self.views[view_index] / f'cloud_{item_index}.npy'
 
 
 class GenericDataset(Dataset):
-    def __init__(self, folder: Path, keys=('colors', 'light_sph_relative'),
-                 splat_size=3, cache=True):
+    def __init__(self, folder: Path,
+                 splat_size=3, cache=False):
         self.folder = Path(folder)
         self.splat_size = splat_size
         self.shape_paths = list(self.folder.iterdir())
@@ -101,11 +101,7 @@ class GenericDataset(Dataset):
                 self.shapes.append(t_shape)
 
         self.inverter = BinMapper([len(x) for x in self.shapes])
-        self.keys = keys
-
-    def control_length(self):
-        _, _, settings = self[0]
-        return settings.shape[0]
+        
 
     def __len__(self):
         # This returns the total number of examples for all shapes
@@ -119,31 +115,16 @@ class GenericDataset(Dataset):
         if rtn is None:
             return self.__getitem__(0)
 
-        settings_path = img_path.parent / 'settings.npy'
-        settings_dict = np.load(settings_path, allow_pickle=True).item()
-
-        settings_vector = []
-        for k in self.keys:
-            if isinstance(settings_dict[k], float):
-                attr = torch.tensor([settings_dict[k]])
-            else:
-                attr = torch.from_numpy(settings_dict[k])
-
-            if k == 'colors':
-                attr = torch.flip(attr, [0])
-            settings_vector.append(attr)
-
-        settings_vector = torch.cat(settings_vector)
         img, zbuffer = rtn
 
-        return img, zbuffer, settings_vector
+        return img, zbuffer
 
 
-def scatter(u_pix, v_pix, distances, res, radius=5, dr=(0, 0), const=6, scale_const=0.7):
+def scatter(u_pix, v_pix, distances, res, radius=5, dr=(0, 0), const=9, scale_const=0.7):
     distances -= const
     img = np.zeros(res)
     for (u, v, d) in zip(u_pix, v_pix, distances):
-        v, u = round(res[0] - (v - dr[0])), round(u - dr[1])
+        v, u = round((v - dr[0])), round(u - dr[1])
         f = np.exp(-d / scale_const)
         if radius == 0:
             img[v, u] = max(img[v, u], f)
@@ -158,7 +139,7 @@ def scatter(u_pix, v_pix, distances, res, radius=5, dr=(0, 0), const=6, scale_co
     return img
 
 
-def parse_pts(ar, radius=3, dr=(0, 0), const=6):
+def parse_pts(ar, radius=3, dr=(0, 0), const=9):
     """
     produce a z_buffer from a numpy array of points in relative coordinates
     :param ar: points array NX3 (** with last point representing resolution)
@@ -166,10 +147,10 @@ def parse_pts(ar, radius=3, dr=(0, 0), const=6):
     :return: np.array NXM with exponential z values for pixel, 0 is inf/background
     """
     res = ar[-1, :-1]
-    res = res[::-1].astype(np.int)
+    res = res.astype(int)
     ar = ar[:-1]
-    x_target, y_target = int(res[0] / 2), int(res[1] / 2)
-    return scatter(ar[:, 0] / 2, ar[:, 1] / 2, ar[:, 2], (x_target, y_target), radius=radius, dr=dr, const=const)
+    x_target, y_target = int(res[0]), int(res[1])
+    return scatter(ar[:, 0], ar[:, 1], ar[:, 2], (x_target, y_target), radius=radius, dr=dr, const=const)
 
 
 def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):

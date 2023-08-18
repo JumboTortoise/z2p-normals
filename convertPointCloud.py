@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from PIL import Image
 import sys
@@ -44,44 +45,104 @@ def render_point_cloud(point_cloud, focal_length, image_width, image_height):
 
     return Image.fromarray(image, 'L')  # 'L' mode for grayscale image
 
+def get_image_from_point_cloud(point_cloud, focal_length, image_height, image_width):
+     # Apply projection to each point in the point cloud
+    
+    x = [1,focal_length,focal_length]
+
+    point_cloud_projected = point_cloud * x
+
+    point_cloud_projected = point_cloud_projected.T
+
+    result_points = 20 * point_cloud_projected[1:] / point_cloud_projected[0]
+
+    rounded_result = np.floor(result_points)
+
+    new_row = point_cloud.T[0] - focal_length * 0.001
+    rounded_result = np.vstack((rounded_result, new_row))
+
+    rounded_result[0] += image_width / 2
+    rounded_result[1] += image_height / 2
+
+    rounded_result[0] = image_width - rounded_result[0]
+    rounded_result[1] = image_height - rounded_result[1]
+
+    result_points_T = rounded_result.T
+    resulotion = np.array([image_height,image_width,0]).T
+
+    result = np.vstack((result_points_T,resulotion))
+
+    return result
+
+
+
+def fix_one_folder(file_in):
+
+    focal_length = 50
+    image_height = 540 
+    image_width = 960
+
+    for filename in os.listdir(file_in):
+        if filename.endswith('.npy'):
+            file_path = os.path.join(file_in, filename)
+
+            data = np.load(file_path)
+
+            point_cloud_image = get_image_from_point_cloud(data, focal_length, image_height, image_width)
+
+            np.save(file_path, point_cloud_image)
+
+
+def fix_shape(dir_path):
+
+    subdirectories = [d for d in os.listdir(dir_path) if os.path.isdir(os.path.join(dir_path, d))]
+    for subdirectory in subdirectories:
+        subdirectory_path = os.path.join(dir_path, subdirectory)
+        fix_one_folder(subdirectory_path)
+
+def draw_fixed_shape(path):
+    # Create a random 3x5000 array
+    array = np.load(path)
+
+    res = array[-1, :-1]
+    res = res.astype(int)
+    array = array[:-1]
+
+    image_width = res[1]
+    image_height = res[0]
+
+    # Extract the first two rows as x and y coordinates
+    x_coords = array[:,0].astype(int)
+    y_coords = array[:,1].astype(int)
+
+    # Create a grayscale image as a NumPy array
+    image = np.ones((image_height, image_width), dtype=np.uint8) * 255
+
+    # Set the specified pixels to black
+    for x, y in zip(x_coords, y_coords):
+        image[y, x] = 0  # Set pixel to black (0)
+
+    # Convert the NumPy array to a PIL Image
+    pil_image = Image.fromarray(image)
+
+    # Display the PIL Image
+    pil_image.show()
+
 
 if __name__=="__main__":
 
-    image = Image.open(r"C:\DeepLrProject\normals\chair\rotation_0\normals.png")
+    shape_dir = r"C:\Users\פישר\Downloads\data_set\chair"
+    point_cloud_path = r"C:\Users\פישר\Downloads\data_set\chair\rotation_75\cloud_0.npy"
 
-    # Convert the image to a NumPy array
-    image_array = np.array(image)
+    # fix_shape(shape_dir)
 
-    point_cloud = np.load(r"C:\DeepLrProject\normals\chair\rotation_0\cloud_0.npy")
+    draw_fixed_shape(point_cloud_path)
 
-    focal_length = 50  # Adjust according to your needs
-    image_width = 960
-    image_height = 540
+        # Path to the PNG image
+    p = r"C:\Users\פישר\Downloads\data_set\chair\rotation_75\normals.png"
 
-    rendered_image = render_point_cloud(point_cloud, focal_length, image_width, image_height)
-    rendered_image.show()
+    # Open the image using Pillow
+    image = Image.open(p)
 
-    image_pil = Image.fromarray(image_array)
-
-    # Now 'image_pil' is a PIL image
-    image_pil.show()  # Display the PIL image
-
-    # Create a new figure and add a 3D subplot
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Extract X, Y, Z coordinates from the point cloud
-    x = point_cloud[:, 0]
-    y = point_cloud[:, 1]
-    z = point_cloud[:, 2]
-
-    # Create a 3D scatter plot
-    ax.scatter(x, y, z, c='b', marker='o')
-
-    # Set labels for the axes
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-
-    # Show the plot
-    plt.show()
+    # Display the image
+    image.show()
