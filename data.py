@@ -5,13 +5,16 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+# get_image_from_point_cloud performs preprocessing that is specific to our dataset
+from convert_point_cloud import get_image_from_point_cloud
+
 RANGES = [[0, 540], [100, 960]]
 TARGET = [500, -1]
 
 
 def resize(img):
     if TARGET[1] == -1:
-        r = img.shape[0] / img.shape[1]
+        r = img.shape[0] / img.shape[1] 
         img = cv2.resize(img, (TARGET[0], int(r * TARGET[0])))
     else:
         img = cv2.resize(img, (TARGET[0], TARGET[1]))
@@ -161,35 +164,47 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
     :param cache: if True used caches Z-buffers else False
     :return: (torch.Tensor, torch.Tensor) target_image (3XNXM), z_buffer (1XNXM)
     """
+    img = None
     if png_path is not None:
         img = cv2.imread(str(png_path), cv2.IMREAD_COLOR)
         if img is None:
             return None
-
+        #print("image:",img.shape[0],img.shape[1])
         img = img[RANGES[0][0]: RANGES[0][1], RANGES[1][0]:RANGES[1][1], :]
         img = resize(img)
+        #print("image resized:",img.shape[0],img.shape[1])
         img = torch.from_numpy(img)
-        img = img.permute(2, 0, 1) / 255
+        img = img.permute(2, 0, 1) / 255 # move to pytorch image format and normalize
 
     if cache:
         cache_path = npy_path.parent / npy_path.name.replace('.npy', '_cache.npy')
         if cache_path.exists():
             z_buffer = np.load(cache_path)
         else:
+            if img is None:
+                return None
             ptsD = np.load(str(npy_path))
+            ptsD = get_image_from_point_cloud(ptsD,50,img.shape[0],img.shape[1]) # our preprocessing
             z_buffer = parse_pts(ptsD, radius=splat_size)
             np.save(cache_path, z_buffer)
     else:
+        if img is None:
+                return None
         ptsD = np.load(str(npy_path))
+        ptsD = get_image_from_point_cloud(ptsD,50,img.shape[0],img.shape[1]) # our preprocessing
+        print("projected",ptsD.shape)
         z_buffer = parse_pts(ptsD, radius=splat_size, dr=dr)
+        print("buffered",z_buffer.shape)
 
     z_buffer = z_buffer[RANGES[0][0]: RANGES[0][1], RANGES[1][0]:RANGES[1][1]]
     z_buffer = resize(z_buffer)
+    print("resized",z_buffer.shape)
 
     z_buffer = torch.from_numpy(z_buffer)
     z_buffer = z_buffer.unsqueeze(0)
 
     if png_path is not None:
+        #print("load files:",img.shape,z_buffer.shape)
         return img, z_buffer
     else:
         return z_buffer

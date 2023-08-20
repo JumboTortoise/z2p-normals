@@ -8,6 +8,7 @@ FORGROUND_VALUE = 255
 BACKGROUND_VALUE = 0
 
 def create_alpha(image):
+    """adds the alpha channel into the blue channel, only required if not included in the dataset"""
     image = image.convert("RGB")
     # red and green contain normal, blue does not contain data
     red, green, blue = image.split()
@@ -20,10 +21,10 @@ def create_alpha(image):
 
 
 
-def apply_matcap(result,matcap):
+def apply_matcap_unnormalized(result,matcap):
     """
     result is assumed to be the output of the network, that is, an RGB image with 2 channels of normals
-    and 1 alpha channel ( the blue channel). The normals will be normalized to between -1 and 1, and the alpha 
+    and 1 alpha channel (the blue channel). The normals will be normalized to between -1 and 1, and the alpha 
     between -1 and 1.
     
     This function applies the given 

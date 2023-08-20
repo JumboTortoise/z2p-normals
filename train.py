@@ -10,6 +10,7 @@ import data as data
 import losses
 import util
 from models import PosADANet
+from tqdm import tqdm
 
 losses_funcs = {}
 for val in getmembers(losses):
@@ -56,11 +57,13 @@ def train(opts):
     avg_loss = util.RunningAverage()
     avg_test_loss = util.RunningAverage()
     for epoch in range(opts.start_epoch, opts.epochs):
+        print(f"starting epoch {epoch}")
         avg_loss.reset()
         model.train()
-        for i, (img, zbuffer) in enumerate(train_loader):
+        for i, (img, zbuffer) in tqdm(enumerate(train_loader)):
             optimizer.zero_grad()
-
+            
+            print("train:",img.shape,zbuffer.shape)
             img: torch.Tensor = img.float().to(device)
             zbuffer: torch.Tensor = zbuffer.float().to(device)
             
@@ -85,24 +88,26 @@ def train(opts):
             avg_loss.add(loss.item())
             print(f'{run_name}; epoch: {epoch}; iter: {i}/{num_samples} loss: {loss}')
 
-        #region test
-        # model.eval()
-        # avg_test_loss.reset()
-        # for i, (img, zbuffer, color) in enumerate(test_loader):
-        #     with torch.no_grad():
-        #         zbuffer = zbuffer.float().to(device)
-        #         color = color.float().to(device)
-        #         img = img.float().to(device)
-        #         generated = model(zbuffer.float(), color)
-        #         test_loss = 0
-        #         for weight, lname in zip(opts.l_weight, opts.losses):
-        #             test_loss += weight * get_loss_function(lname)(generated, img)
-        #         avg_test_loss.add(test_loss.item())
+        """
+        region test
+        model.eval()
+        avg_test_loss.reset()
+        for i, (img, zbuffer, color) in enumerate(test_loader):
+            with torch.no_grad():
+                zbuffer = zbuffer.float().to(device)
+                color = color.float().to(device)
+                img = img.float().to(device)
+                generated = model(zbuffer.float(), color)
+                test_loss = 0
+                for weight, lname in zip(opts.l_weight, opts.losses):
+                    test_loss += weight * get_loss_function(lname)(generated, img)
+                avg_test_loss.add(test_loss.item())
 
-        #         expanded_z_buffer = zbuffer.repeat((1, 4, 1, 1))
-        #         expanded_z_buffer[:, -1, :, :] = 1
-        #         cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
-        #         log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach(), color)
+                expanded_z_buffer = zbuffer.repeat((1, 4, 1, 1))
+                expanded_z_buffer[:, -1, :, :] = 1
+                cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
+                log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach(), color)
+        """
         #endregion
         print(f'average train loss: {avg_loss.get_average()}')
 
@@ -110,14 +115,19 @@ def train(opts):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('')
+    command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"""
+
+    parser = argparse.ArgumentParser(
+                    prog='python train.py',
+                    description='This is the training script for z2p-normals, a version of z2p made to visualize normal maps from point clouds',
+                    epilog=f'example command: {"python train.py " + command}')
     parser.add_argument('--data', type=Path)
     parser.add_argument('--export_dir', type=Path)
-    parser.add_argument('--test_data', type=Path)
+    #parser.add_argument('--test_data', type=Path)
     parser.add_argument('--checkpoint', type=Path, default=None)
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--batch_size', type=int)
-    parser.add_argument('--test_batch_size', type=int, default=10)
+    #parser.add_argument('--test_batch_size', type=int, default=10)
     parser.add_argument('--num_workers', type=int)
     parser.add_argument('--nfreq', type=int, default=20)
     parser.add_argument('--freq_magnitude', type=int, default=10)
@@ -133,6 +143,6 @@ if __name__ == '__main__':
     parser.add_argument('--splat_size', type=int)
     
 
-    command = r"""--data C:\data_set --export_dir C:\z2p_normals\models --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"""
 
-    train(parser.parse_args(command.split(" ")))
+    #train(parser.parse_args(command.split(" ")))
+    train(parser.parse_args())
