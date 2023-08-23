@@ -26,6 +26,12 @@ proj = torch.tensor([
 ])
 
 
+def center_of_mass(pc):
+    if torch.is_tensor(pc):
+        return torch.sum(pc,dim=0)/pc.shape[0]
+    return np.sum(pc,axis=0)/pc.shape[0]
+
+
 def generate_roation(phi_x, phi_y, phi_z):
     def Rx(theta):
         return torch.tensor([[1, 0, 0],
@@ -45,12 +51,16 @@ def generate_roation(phi_x, phi_y, phi_z):
     return Rz(phi_z) @ Ry(phi_y) @ Rx(phi_x)
 
 
-def rotate_pc(pc, rx, ry, rz):
+def rotate_pc(pc, rx, ry, rz , pivot=None):
+    if pivot is not None:
+        pc -= pivot
     rotation = generate_roation(rx, ry, rz)
     rotated = pc.clone()
     rotated[:, :3] = rotated[:, :3] @ rotation.T
     if rotated.shape[-1] == 6:
         rotated[:, 3:] = rotated[:, 3:] @ rotation.T
+    if pivot is not None:
+        return pc + pivot
     return rotated
 
 
