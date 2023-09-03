@@ -2,15 +2,23 @@ import torch
 import torch.nn.functional as F
 import torchvision
 
+import torchvision.models.vgg as vgg
+import numpy as np
+
+"""
+Note: the images are in BGR format, not RGB
+
+This means the the alpha(blue) channel is the FIRST channel, not the last
+"""
 
 class VGGPerceptualLoss(torch.nn.Module):
     def __init__(self, resize=True):
         super(VGGPerceptualLoss, self).__init__()
         blocks = []
-        blocks.append(torchvision.models.vgg16(pretrained=True).features[:4].eval())
-        blocks.append(torchvision.models.vgg16(pretrained=True).features[4:9].eval())
-        blocks.append(torchvision.models.vgg16(pretrained=True).features[9:16].eval())
-        blocks.append(torchvision.models.vgg16(pretrained=True).features[16:23].eval())
+        blocks.append(torchvision.models.vgg16(weights=vgg.VGG16_Weights.DEFAULT).features[:4].eval())
+        blocks.append(torchvision.models.vgg16(weights=vgg.VGG16_Weights.DEFAULT).features[4:9].eval())
+        blocks.append(torchvision.models.vgg16(weights=vgg.VGG16_Weights.DEFAULT).features[9:16].eval())
+        blocks.append(torchvision.models.vgg16(weights=vgg.VGG16_Weights.DEFAULT).features[16:23].eval())
 
         for bl in blocks:
             for p in bl.parameters():
@@ -47,20 +55,52 @@ class VGGPerceptualLoss(torch.nn.Module):
                 loss += torch.nn.functional.l1_loss(gram_x, gram_y)
         return loss
 
-__objects = {"vgg_preceptual":VGGPerceptualLoss()}
+__preceptual_loss_obj = VGGPerceptualLoss()
+
+__device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+__laplacian_kernel = torch.tensor(np.array([
+        [0,-1,0],
+        [-1,4,-1],
+        [0,-1,0]
+    ])).unsqueeze(0).unsqueeze(0).repeat(2,1,1,1).float().to(__device)
+
+__gaussian_kernel = torch.tensor(np.array([
+    [1/16,1/8,1/16],
+    [1/8,1/4,1/8],
+    [1/16,1/8,1/16]
+    ])).unsqueeze(0).unsqueeze(0).repeat(2,1,1,1).float().to(__device)
+
+
+
+def masked_laplacan_weighted_mse(generated,gt):
+    foreground_mask = (gt[:, 0, :, :] > 0).float()
+    gt = gt[:,1:,:,:] # remove blue channel (alpha)
+    gt.requires_grad = False
+
+    # apply filters to gt image
+    scale = 1
+    weights = torch.abs(F.conv2d(gt, __laplacian_kernel, bias=None, stride=1, padding=1, dilation=1, groups=2))*scale
+    weights = torch.abs(F.conv2d(weights,__gaussian_kernel,bias=None,stride=1,padding=1,dilation=1,groups=2))
+
+    loss = (generated[:, 1:, :, :] - gt[:,:, :, :]) ** 2
+    loss = (loss*weights).sum(dim=1)
+    loss *= foreground_mask
+    loss = loss.sum() / max(foreground_mask.float().sum() , 1)
+    return loss
 
 def preceptual(generated, gt):
    return __objects['vgg_preceptual'](generated,gt)
 
 def mse(generated, gt):
-    loss = (generated[:, :2, :, :] - gt[:, :2, :, :]) ** 2
+    loss = (generated[:, 1:, :, :] - gt[:, 1:, :, :]) ** 2
     loss = loss.sum(dim=1)
     loss = loss.sum() / (loss.shape[-1] * loss.shape[-2])
     return loss
 
 def masked_mse(generated, gt):
-    foreground_mask = (gt[:, -1, :, :] > 0).float()
-    loss = (generated[:, :2, :, :] - gt[:, :2, :, :]) ** 2
+    foreground_mask = (gt[:, 0, :, :] > 0).float()
+    loss = (generated[:, 1:, :, :] - gt[:, 1:, :, :]) ** 2
     loss = loss.sum(dim=1)
     loss *= foreground_mask
     loss = loss.sum() / max(foreground_mask.float().sum() , 1)
@@ -68,10 +108,10 @@ def masked_mse(generated, gt):
 
 
 def masked_cosine(generated, gt, eps=1e-5):
-    foreground_mask = (gt[:, -1, :, :] > 0).float()
+    foreground_mask = (gt[:, 0, :, :] > 0).float()
 
-    dot = (generated[:, :2, :, :] * gt[:, :2, :, :]).sum(dim=1)
-    norm = generated[:, :2, :, :].norm(dim=1) * gt[:, :2, :, :].norm(dim=1)
+    dot = (generated[:, 1:, :, :] * gt[:, 1:, :, :]).sum(dim=1)
+    norm = generated[:, 1:, :, :].norm(dim=1) * gt[:, 1:, :, :].norm(dim=1)
 
     zero_mask = norm < eps
     dot *= (~zero_mask).type(dot.dtype)  # make sure gradients don't flow to elements considered zero
@@ -85,30 +125,30 @@ def masked_cosine(generated, gt, eps=1e-5):
 
 
 def intensity(generated, gt):
-    intensity_generated = generated[:, -1, :, :]
-    intensity_gt = gt[:,-1, :, :]
+    intensity_generated = generated[:, 0, :, :]
+    intensity_gt = gt[:,0, :, :]
     loss = (intensity_generated - intensity_gt).abs()
     loss = loss.sum() / (loss.shape[-1] * loss.shape[-2])
     return loss
 
 
 def mse_intensity(generated, gt):
-    intensity_generated = generated[:, -1, :, :]
-    intensity_gt = gt[:, -1, :, :]
+    intensity_generated = generated[:, 0, :, :]
+    intensity_gt = gt[:, 0, :, :]
     loss = (intensity_generated - intensity_gt) ** 2
     loss = loss.sum() / (loss.shape[-1] * loss.shape[-2])
     return loss
 
 
 def pixel_intensity(generated, gt):
-    loss = (generated[:, :2, :, :].norm(dim=1) - gt[:, :2, :, :].norm(dim=1)).abs()
+    loss = (generated[:, 1:, :, :].norm(dim=1) - gt[:, 1:, :, :].norm(dim=1)).abs()
     loss = loss.sum() / (loss.shape[-1] * loss.shape[-2])
     return loss
 
 
 def masked_pixel_intensity(generated, gt):
-    foreground_mask = (gt[:, -1, :, :] > 0).float()
-    loss = (generated[:, :2, :, :].norm(dim=1) - gt[:, :2, :, :].norm(dim=1)).abs() * foreground_mask
+    foreground_mask = (gt[:, 0, :, :] > 0).float()
+    loss = (generated[:, 1:, :, :].norm(dim=1) - gt[:, 1:, :, :].norm(dim=1)).abs() * foreground_mask
     loss = loss.sum() / foreground_mask.sum()
     return loss
 

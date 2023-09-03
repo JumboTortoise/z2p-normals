@@ -61,6 +61,8 @@ def train(opts):
     if opts.checkpoint is not None:
         model.load_state_dict(torch.load(opts.checkpoint))
 
+    lfuncs = {lname:get_loss_function(lname) for lname in opts.losses}
+
     optimizer = torch.optim.Adam(model.parameters(), lr=opts.lr)
     global_step = 0
     avg_loss = util.RunningAverage()
@@ -81,7 +83,7 @@ def train(opts):
                     generated = model(zbuffer.float())
                     loss = 0
                     for weight, lname in zip(opts.l_weight, opts.losses):
-                        loss += weight * get_loss_function(lname)(generated, img)
+                        loss += weight * lfuncs[lname](generated, img)
 
                     if loss != 0:
                         scaler.scale(loss).backward()
@@ -91,7 +93,7 @@ def train(opts):
                 generated = model(zbuffer.float())
                 loss = 0
                 for weight, lname in zip(opts.l_weight, opts.losses):
-                    loss += weight * get_loss_function(lname)(generated, img)
+                    loss += weight * lfuncs[lname](generated, img)
 
                 if loss != 0:
                     loss.backward()
@@ -143,7 +145,7 @@ def train(opts):
 
 
 if __name__ == '__main__':
-    command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"""
+    command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 1"""
 
     parser = argparse.ArgumentParser(
                     prog='python train.py',

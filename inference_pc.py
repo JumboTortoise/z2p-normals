@@ -98,14 +98,8 @@ def video(opts,frames=128):
         
         batch = torch.concat(zbuffers[f:f + opts.video_batch],dim=0)
         
-        if opts.mixed_precision:
-            mp_device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
-            with torch.autocast(device_type=mp_device_type, dtype=torch.float16):
-                with torch.no_grad():
-                    generated = model(batch.float())
-        else:
-            with torch.no_grad():
-                generated = model(batch.float())
+        with torch.no_grad():
+            generated = model(batch.float())
 
         for i in range(len(generated)):
             frame = generated[i]
@@ -126,12 +120,6 @@ def video(opts,frames=128):
         if frame is not None:
             video_writer.write(frame)
 
-
-
-
-
-
-
 def single(opts):
     timer = util.timer_factory()
     device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
@@ -143,8 +131,6 @@ def single(opts):
         zbuffer = parse_pts(get_image_from_point_cloud(pc,opts.focal_length,opts.zbuffer_height,opts.zbuffer_width),radius=opts.splat_size)
         zbuffer = zbuffer[opts.height_ranges[0]: opts.height_ranges[1], opts.width_ranges[0]:opts.width_ranges[1]]
         zbuffer = resize(zbuffer,target=[opts.sampled_width,opts.sampled_height])
-
-
 
     if opts.flip_z:
         zbuffer = np.flip(zbuffer, axis=0).copy()
@@ -168,14 +154,8 @@ def single(opts):
 
     model.eval()
 
-    if opts.mixed_precision:
-        mp_device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
-        with torch.autocast(device_type=mp_device_type, dtype=torch.float16):
-            with torch.no_grad():
-                generated = model(zbuffer.float())
-    else:
-        with torch.no_grad():
-            generated = model(zbuffer.float())
+    with torch.no_grad():
+        generated = model(zbuffer.float())
 
     if opts.show_results:
         im = generated[0].permute(1,2,0).clip(0,1)*255
@@ -183,6 +163,7 @@ def single(opts):
         
         im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB) # for some reason, output is in BGR? 
 
+        """
         fig,axis = plt.subplots(nrows=1,ncols=3)
         axis[0].set_title('red')
         axis[0].imshow(im[:,:,0])
@@ -191,7 +172,8 @@ def single(opts):
         axis[2].set_title('blue')
         axis[2].imshow(im[:,:,-1])
         plt.show()
-
+        """
+        
         plt.title("generated")
         plt.imshow(im)
         plt.show()
@@ -210,7 +192,10 @@ def single(opts):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('')
+    sample_command = "python inference_pc.py --show_results --pc /path/to/cloud.npy --checkpoint /path/to/model.pt --export_dir /where/to/save"
+    parser = argparse.ArgumentParser(
+        prog='get single frame or video visualization of point cloud',
+        epilog=f'example command: {"python inference_pc.py " + sample_command}')
     parser.add_argument('--export_dir', type=Path, default=None, required=False,
                         help='path to export directory, if blank dont save')
 
@@ -243,7 +228,6 @@ if __name__ == '__main__':
     parser.add_argument('--matcap',type=Path,default=None,required=False,
                         help='a matcap to apply to rendered normal map')
     parser.add_argument('--show_results', action='store_true', help='show results with matplotlib')
-    parser.add_argument('--mixed_precision',action='store_true')
     parser.add_argument('--splat_size',type=int,default=1)
     parser.add_argument('--nfreq', type=int, default=20)
     parser.add_argument('--freq_magnitude', type=int, default=10)
