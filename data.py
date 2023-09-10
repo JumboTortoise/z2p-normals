@@ -12,12 +12,14 @@ RANGES = [[0, 540], [100, 960]]
 TARGET = [500, -1]
 
 
-def resize(img):
-    if TARGET[1] == -1:
+def resize(img,target = None):
+    if target is None:
+        target = TARGET
+    if target[1] == -1:
         r = img.shape[0] / img.shape[1] 
-        img = cv2.resize(img, (TARGET[0], int(r * TARGET[0])))
+        img = cv2.resize(img, (target[0], int(r * target[0])))
     else:
-        img = cv2.resize(img, (TARGET[0], TARGET[1]))
+        img = cv2.resize(img, (target[0], target[1]))
 
     return img
 
@@ -57,7 +59,7 @@ class Shape:
         for npy in view_folder.iterdir():
             spt = npy.name.split('.')
             #all_numbers = all(['0' <= c <= '9' for c in spt[0]])
-            if len(spt) == 2 and spt[1] == 'npy':
+            if len(spt) == 2 and spt[1] == 'npy' and not spt[0].endswith('cache'):
                 # yield npy
                 counter += 1
         return counter
@@ -165,16 +167,31 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
     :return: (torch.Tensor, torch.Tensor) target_image (3XNXM), z_buffer (1XNXM)
     """
     img = None
+    im_height,im_width = None,None
     if png_path is not None:
         img = cv2.imread(str(png_path), cv2.IMREAD_COLOR)
+
         if img is None:
             return None
-        #print("image:",img.shape[0],img.shape[1])
+        
+
+        # reshape and resize
+        im_height,im_width = img.shape[0],img.shape[1]
         img = img[RANGES[0][0]: RANGES[0][1], RANGES[1][0]:RANGES[1][1], :]
         img = resize(img)
-        #print("image resized:",img.shape[0],img.shape[1])
+        
+        
+
+        # move to pytorch tensor and normalize
         img = torch.from_numpy(img)
-        img = img.permute(2, 0, 1) / 255 # move to pytorch image format and normalize
+        img = img.permute(2, 0, 1) / 255 # move to pytorch image format and normalize to [0,1]
+        #img = img * 2 - 1 # normalize to [-1,1]
+
+        # fix noise that was introduced by blender during dataset creation,
+        # alpha (blue channel) should be -1 for background and 1 for fourground
+        #img[-1,:,:][img[-1,:,:] > 0.5] = 1
+        #img[-1,:,:][img[-1,:,:] <= 0.5] = -1
+
 
     if cache:
         cache_path = npy_path.parent / npy_path.name.replace('.npy', '_cache.npy')
@@ -184,21 +201,23 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
             if img is None:
                 return None
             ptsD = np.load(str(npy_path))
-            ptsD = get_image_from_point_cloud(ptsD,50,img.shape[0],img.shape[1]) # our preprocessing
+            ptsD = get_image_from_point_cloud(ptsD,50,im_height,im_width) # our preprocessing
             z_buffer = parse_pts(ptsD, radius=splat_size)
             np.save(cache_path, z_buffer)
     else:
         if img is None:
                 return None
         ptsD = np.load(str(npy_path))
+<<<<<<< HEAD
         ptsD = get_image_from_point_cloud(ptsD,50,540,960) # our preprocessing
         print("projected",ptsD.shape)
+=======
+        ptsD = get_image_from_point_cloud(ptsD,50,im_height,im_width) # our preprocessing
+>>>>>>> 36308052f8824be89d5137229ca0812a4c34f4da
         z_buffer = parse_pts(ptsD, radius=splat_size, dr=dr)
-        print("buffered",z_buffer.shape)
 
     z_buffer = z_buffer[RANGES[0][0]: RANGES[0][1], RANGES[1][0]:RANGES[1][1]]
     z_buffer = resize(z_buffer)
-    print("resized",z_buffer.shape)
 
     z_buffer = torch.from_numpy(z_buffer)
     z_buffer = z_buffer.unsqueeze(0)

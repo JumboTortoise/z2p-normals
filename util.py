@@ -1,7 +1,10 @@
 import time
 from pathlib import Path
+import numpy as np
 
 import torch
+
+
 
 
 def embed_background(img):
@@ -21,7 +24,7 @@ def embed_color(img: torch.Tensor, color, box_size=70):
     return img
 
 
-def xyz2tensor(txt, append_normals=False):
+def xyz2tensor(txt, append_normals=False):        
     pts = []
     for line in txt.split('\n'):
         line = line.strip()
@@ -42,6 +45,8 @@ def xyz2tensor(txt, append_normals=False):
 
 
 def read_xyz_file(path: Path):
+    if path.suffix.endswith('npy'): # added ability to load np array
+        return torch.tensor(np.load(path)).float()
     with open(path, 'r') as file:
         return xyz2tensor(file.read(), append_normals=True)
 

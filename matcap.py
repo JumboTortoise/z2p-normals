@@ -27,7 +27,7 @@ def apply_matcap_unnormalized(result,matcap):
     and 1 alpha channel (the blue channel). The normals will be normalized to between -1 and 1, and the alpha 
     between -1 and 1.
     
-    This function applies the given 
+    This function applies the given matcap to the normal map 
 
     the RED channel of the result contain the X value of the normals, the GREEN channel contain the Y values,
     and the BLUE channel contains alpha - a max value of 255 for forground object, and 0 for background
@@ -39,15 +39,14 @@ def apply_matcap_unnormalized(result,matcap):
     matcap_size = len(matcap)
 
     # normalize
-    result = np.concatenate(((result[:,:,:2]/255)*2 - 1,result[:,:,2:]/255),axis=2)
+    result = np.concatenate(((result[:,:,:2]/255)*2 - 1,(result[:,:,2:]/255)*2 - 1),axis=2)
 
     # apply matcap
-    foreground_mask = (result[:,:,2] > 0)[:,:,np.newaxis] 
+    foreground_mask = (result[:,:,2] > 0)[:,:,np.newaxis]
     result_x_normals = np.round((result[:,:,0]*0.5 + 0.5)*(matcap_size - 1)).flatten().astype(int)
     result_y_normals = np.round((result[:,:,1]*0.5 + 0.5)*(matcap_size - 1)).flatten().astype(int)
     final_array = matcap[result_x_normals,result_y_normals,:].reshape(result.shape)*foreground_mask # use normals as indexes into the matcap
-    final = Image.fromarray(final_array)
-    return final
+    return final_array
 
 
 if __name__ == '__main__':
@@ -65,7 +64,7 @@ if __name__ == '__main__':
     #nmap.split()[2].show()
     #time.sleep(TIME)
 
-    final = apply_matcap(nmap,matcap)
+    final = apply_matcap_unnormalized(nmap,matcap)
     final.show()
     
     

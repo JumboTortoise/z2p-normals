@@ -10,11 +10,22 @@ import numpy as np
 import torch
 from matplotlib import pyplot as plt
 
+# used to create matcap
+from matcap import apply_matcap_unnormalized
+
+# used to create point cloud
+from convert_point_cloud import get_image_from_point_cloud
+from data import parse_pts,resize
+
+
 import render_util
 import util
 from models import PosADANet
+from PIL import Image
+import io
 
 ROOT_PATH = Path(__file__).resolve().absolute().parent
+FRAME_DIRECTORY = Path(__file__).resolve().absolute().parent.joinpath('frames')
 torch.manual_seed(10)
 
 
@@ -37,92 +48,96 @@ def load_metadata():  # load metadata from the .json file
     return models_meta
 
 
-def load_pretrained_model(model_type: str):
-    """
-    Load model from memory, or download from drive
-    :param model_type: model type as written in default_settings.json
-    :return: returns the pretrained model
-
-    NOTE: this function has lost it's utility, since there is no pretrained z2p-normals model to download
-    """
-    models_meta = load_metadata()
-    #if model_type not in models_meta.keys():
-    #    raise ValueError(f'no model type {model_type}')
-
-    path = ROOT_PATH / models_meta[model_type]['path']
-    url = models_meta[model_type]['url']
-    num_controls = models_meta[model_type]['len_style']
-
-    if not path.exists():
-        gdown.download(url, str(path), quiet=False)
-    device = torch.device('cpu')
-    model = PosADANet(1, 4, num_controls, padding='zeros', bilinear=True).to(device)
-    model.load_state_dict(torch.load(path, map_location=device))
-
-    return model
-
-
 def load_model_from_checkpoint(opts):
     device = torch.device('cpu')
-    models_meta = load_metadata()
+    #models_meta = load_metadata()
     #if opts.model_type not in models_meta.keys():
     #    raise ValueError(f'no model type {opts.model_type}')
 
     #num_controls = models_meta[opts.model_type]['len_style']
-    num_controls = models_meta["regular"]['len_style']
-    model = PosADANet(1, 4, num_controls, padding=opts.padding, bilinear=not opts.trans_conv).to(device)
+    #num_controls = models_meta["regular"]['len_style']
+    model = PosADANet(1, 3, padding=opts.padding, bilinear=not opts.trans_conv,
+        nfreq=opts.nfreq, magnitude=opts.freq_magnitude).to(device)
     model.load_state_dict(torch.load(opts.checkpoint, map_location=device))
     return model
 
+def clear_frames():
+    files = [pth.resolve() for pth in FRAME_DIRECTORY.iterdir() if pth.is_file() and file.suffix.endswith('png')]
+    for pth in files:
+        pth.unlink()
 
-def generate_controls_vector(opts, n_style):
+def video(opts,frames=128):
+    timer = util.timer_factory()
+    device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
+    clear_frames()
+    zbuffers = []
+    with timer('load pc'):
+        pc = torch.tensor(np.load(opts.pc)).float()
+        center = render_util.center_of_mass(pc)
+        for f in range(len(frames)):
+            pc = render_util.rotate_pc(pc,0,0,0.3,pivot=center)
+            zbuffer = parse_pts(get_image_from_point_cloud(pc,opts.focal_length,opts.zbuffer_height,opts.zbuffer_width),radius=opts.splat_size)
+            #zbuffer = zbuffer[opts.width_ranges[0]: opts.width_ranges[1], opts.height_ranges[0]:opts.height_ranges[1]]
+            zbuffer = resize(zbuffer,target=[opts.sampled_width,opts.sampled_height])
 
-    """
-    Since the base z2p-normals model has no controls, this function
-    has no use
-    """
+            if opts.flip_z:
+                zbuffer = np.flip(zbuffer, axis=0).copy()
+            zbuffer: torch.Tensor = torch.from_numpy(zbuffer).float().to(device)
 
-    # create an empty style vector
-    controls = torch.zeros(n_style).float()
+            zbuffer = zbuffer.unsqueeze(-1).permute(2, 0, 1)
+            zbuffer: torch.Tensor = zbuffer.float().to(device).unsqueeze(0)
 
-    # RGB
-    controls[0], controls[1], controls[2] = opts.rgb[2], opts.rgb[1], opts.rgb[0]
-    controls[:3] /= 255
-    controls[0:3] = controls[0:3].clamp(0, 0.95)
+            zbuffers.append(zbuffer)
 
-    # Light position
-    # delta_r, delta_phi, delta_theta
-    controls[3], controls[4], controls[5] = opts.light[0], opts.light[1], opts.light[2]
+    model = load_model_from_checkpoint(opts).to(device)
 
-    # limit phi
-    controls[4] = controls[4].clamp(-math.pi / 4, math.pi / 4)
-    # limit theta
-    controls[5] = controls[5].clamp(0, math.pi / 4)
+    model.eval()
+    f = 0
+    while f < frames:
+        
+        
+        batch = torch.concat(zbuffers[f:f + opts.video_batch],dim=0)
+        
+        with torch.no_grad():
+            generated = model(batch.float())
 
-    if n_style == 8:
-        # if in metal roughness mode set metal roughness values as well
-        controls[6], controls[7] = opts.metal, opts.roughness
-        # limit values between 0-1 i.e. the values the network was trained on
-        controls[6] = controls[6].clamp(0, 1)
-        controls[7] = controls[7].clamp(0, 1)
+        for i in range(len(generated)):
+            frame = generated[i]
+            im = frame.permute(1,2,0).clip(0,1)*255
+            im = im.detach().cpu().numpy()
+            cv2.imwrite(FRAME_DIRECTORY / f"frame_{f + i}.png",im)
+        f += len(batch)
+    
+    fps = 30
+    frame_size = (1920, 1080)  # Adjust to your frame dimensions
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Specify the codec (may vary based on your system)
+    video_writer = cv2.VideoWriter(output_video_filename, fourcc, fps, frame_size)
 
-    return controls
+    # Loop through PNG files and add them to the video
+    for png_file in png_files:
+        frame_path = os.path.join(input_directory, png_file)
+        frame = cv2.imread(frame_path)
+        if frame is not None:
+            video_writer.write(frame)
 
-
-def main(opts):
+def single(opts):
     timer = util.timer_factory()
     device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
 
     with timer('load pc'):
-        pc = util.read_xyz_file(opts.pc)
-        pc = render_util.rotate_pc(pc, opts.rx, opts.ry, opts.rz)
-        zbuffer = render_util.draw_pc(pc, radius=3, dy=opts.dy, scale=opts.scale)
+        pc = torch.tensor(np.load(opts.pc)).float()
+        center = render_util.center_of_mass(pc)
+        pc = render_util.rotate_pc(pc, opts.rx, opts.ry, opts.rz,pivot=center)
+        zbuffer = parse_pts(get_image_from_point_cloud(pc,opts.focal_length,opts.zbuffer_height,opts.zbuffer_width),radius=opts.splat_size)
+        zbuffer = zbuffer[opts.height_ranges[0]: opts.height_ranges[1], opts.width_ranges[0]:opts.width_ranges[1]]
+        zbuffer = resize(zbuffer,target=[opts.sampled_width,opts.sampled_height])
 
     if opts.flip_z:
         zbuffer = np.flip(zbuffer, axis=0).copy()
 
     if opts.show_results:
-        plt.imshow(zbuffer)
+        plt.title("z-buffer")
+        plt.imshow(zbuffer,cmap='gray')
         plt.show()
     zbuffer: torch.Tensor = torch.from_numpy(zbuffer).float().to(device)
 
@@ -135,47 +150,66 @@ def main(opts):
         opts.export_dir.mkdir(exist_ok=True, parents=True)
         export_results(opts, [f'zbuffer'], zbuffer.detach())
 
-    #if opts.checkpoint:
-        # Load model from .pt checkpoint file
     model = load_model_from_checkpoint(opts).to(device)
 
-    #else:
-        # Download and load published pretrained models
-        #model = load_pretrained_model(opts.model_type).to(device)
     model.eval()
 
-    #controls = generate_controls_vector(opts, model.n_style).to(device)
-    #controls = controls.unsqueeze(0)
-
     with torch.no_grad():
-        #generated = model(zbuffer.float(), controls).clamp(0, 1)
-        generated = model(zbuffer.float()).clamp(0, 1)
-    #generated = util.embed_color(generated.detach(), controls[:, :3], box_size=50)
+        generated = model(zbuffer.float())
 
     if opts.show_results:
-        plt.imshow(generated[0].permute(1, 2, 0).cpu())
+        im = generated[0].permute(1,2,0).clip(0,1)*255
+        im = im.detach().cpu().numpy().astype(np.uint8)
+        
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB) # for some reason, output is in BGR? 
+
+        """
+        fig,axis = plt.subplots(nrows=1,ncols=3)
+        axis[0].set_title('red')
+        axis[0].imshow(im[:,:,0])
+        axis[1].set_title('green')
+        axis[1].imshow(im[:,:,1])
+        axis[2].set_title('blue')
+        axis[2].imshow(im[:,:,-1])
+        plt.show()
+        """
+        
+        plt.title("generated")
+        plt.imshow(im)
         plt.show()
 
+        if opts.matcap is not None:
+            
+            matcap = apply_matcap_unnormalized(im,Image.open(opts.matcap))
+            plt.title("matcap")
+            plt.imshow(matcap)
+            plt.show()
+    
     if export_results_flag:
-        export_results(opts, [f'rendered'], generated.detach())
+        export_results(opts, [f'rendered'], generated)
 
     print('done')
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('')
+    sample_command = "python inference_pc.py --show_results --pc /path/to/cloud.npy --checkpoint /path/to/model.pt --export_dir /where/to/save"
+    parser = argparse.ArgumentParser(
+        prog='get single frame or video visualization of point cloud',
+        epilog=f'example command: {"python inference_pc.py " + sample_command}')
     parser.add_argument('--export_dir', type=Path, default=None, required=False,
                         help='path to export directory, if blank dont save')
+
+    parser.add_argument('--focal_length',type=int,default=50)
+    parser.add_argument('--zbuffer_width',type=int,default=960)
+    parser.add_argument('--zbuffer_height',type=int,default=540)
+    parser.add_argument('--width_ranges',type=int,nargs=2,default=[100, 960])
+    parser.add_argument('--height_ranges',type=int,nargs=2,default=[0, 540])
+    parser.add_argument('--sampled_width',type=int,default=500)
+    parser.add_argument('--sampled_height',type=int,default=-1)
 
     parser.add_argument('--pc', type=Path, required=True, help='path to input point cloud to visualize')
     parser.add_argument('--trans_conv', action='store_true',
                         help='use a model with transconv instead of bilinear upsampling')
-    #parser.add_argument('--rgb', nargs='+', default=[255, 255, 255], type=float, required=False,
-    #                    help='color of the visualized object')
-    #parser.add_argument('--light', nargs='+', default=[0, 0, 0], type=float, required=False,
-    #                    help='light position input: delta_r delta_phi delta_theta')
-    #parser.add_argument('--metal', type=float, default=0.5, required=False)
-    #parser.add_argument('--roughness', type=float, default=0.5, required=False)
     parser.add_argument('--padding', default='zeros', type=str, required=False, help='padding type for the model')
     parser.add_argument('--scale', default=1.0, type=float, required=False,
                         help='pc scale before the 2D z-buffer projection')
@@ -186,18 +220,22 @@ if __name__ == '__main__':
     parser.add_argument('--rz', default=2.0, type=float, required=False,
                         help='rotation on the input pc around the z axis')
     parser.add_argument('--flip_z', action='store_true', help='flip the z axis')
-
     parser.add_argument('--dy', default=290, type=int, required=False,
                         help='translation of the input pc in the vertical direction of the image')
-
-    #parser.add_argument('--model_type', type=str, required=True,
-    #                    help='model type: regular, metal_roughness,'
-    #                         ' used for setting the number of controls and download of pretrained models')
     parser.add_argument('--checkpoint', type=Path, required=True,
                         help='path to the .pt model checkpoint,'
                              ' if None a pretrained model will be downloaded from gdrive according to --model_type')
     parser.add_argument('--matcap',type=Path,default=None,required=False,
                         help='a matcap to apply to rendered normal map')
     parser.add_argument('--show_results', action='store_true', help='show results with matplotlib')
+    parser.add_argument('--splat_size',type=int,default=1)
+    parser.add_argument('--nfreq', type=int, default=20)
+    parser.add_argument('--freq_magnitude', type=int, default=10)
+    parser.add_argument('--video',action='store_true')
+    parser.add_argument('--video_batch',type=int,default=4)
 
-    main(parser.parse_args())
+    opts = parser.parse_args()
+    if opts.video:
+        video(opts)
+    else:
+        single(opts)

@@ -2,3 +2,7 @@
 meshes/
 .vscode
 __pycache__
+models/
+blender/renderer_old.py
+blender/alphatest.png
+blender/renderer.blend1

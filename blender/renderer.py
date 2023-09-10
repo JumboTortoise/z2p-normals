@@ -32,8 +32,9 @@ import random
 import numpy as np
 import pathlib
 import math
+import bmesh
 
-PARTICLE_COUNT = 5000
+POINTS = 5000
 BASE_FOLDER = '/hdd/Datasets/normals/'
 CLOUD_RESEEDS = 10
 ROTATIONS_PER_MESH = 100
@@ -60,40 +61,42 @@ def generate_random_rotation():
     
     return (rotation_x, rotation_y, rotation_z)
 
-def make_particle_settings():
-    
-    particle_settings = bpy.data.particles.new("MAIN_PSETTINGS")
-    particle_settings.type = 'HAIR'
-    particle_settings.count = PARTICLE_COUNT  # Number of particles you want
-    particle_settings.emit_from = 'FACE'  # Emit particles from the volume of the object
-    particle_settings.use_emit_random = True
-    particle_settings.render_type = "PATH" # set to None to not see particles
-    #particle_settings.instance_object = bpy.data.objects['PARTICLE']
-    return particle_settings
+def sample_triangular_face(face):
+    u = random.random()
+    v = random.random()
 
-def sample_mesh(obj,settings):
-    """
-    adds a particle system to the selected object and gets their positions as a point cloud
-    """
-    particle_system = obj.modifiers.new(name="point_cloud_particle_system", type='PARTICLE_SYSTEM')
-    particle_system.particle_system.settings = settings
+    # Ensure that the sum of u and v doesn't exceed 1
+    if u + v > 1:
+        u = 1 - u
+        v = 1 - v
 
-    
+    w = 1 - u - v
+
+    # Calculate the point's coordinates using barycentric interpolation
+    sampled_point = (face.verts[0].co * u +
+                    face.verts[1].co * v +
+                    face.verts[2].co * w)
+    return sampled_point
+
+def sample_mesh(obj,bm,probs):
+    """
+    samples some points from a mesh
+    """
+    bpy.context.view_layer.update()
+    mat = obj.matrix_world # matrix that moves the particle position from object coordinates to world coordinates
     clouds = []
-    for i in range(CLOUD_RESEEDS):
-        particle_system.particle_system.seed = random.randint(0,1_000_000)
-        locations = [list(particle.location) for particle in obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).particle_systems[0].particles]
-        if len(locations) != PARTICLE_COUNT:
-            raise AssertionError(f"only {len(locations)} particle locations were found, instead of the expected {PARTICLE_COUNT}")
-        clouds.append(np.array(locations))
-        #time.sleep(0.2)
-    bpy.ops.object.particle_system_remove()
+    camera_location = np.array(list(bpy.data.objects["Camera"].location))
+    selected_face_indices = np.random.choice(len(probs),size=POINTS,replace=True,p=probs)
+
+    for i in range(CLOUD_RESEEDS): 
+        points = np.array([list(mat @ sample_triangular_face(bm.faces[j])) for j in selected_face_indices])
+        points = points - camera_location
+        clouds.append(points)
     return clouds
 
 def main(collection_name):
     main_collection = bpy.data.collections[collection_name]
     mesh_collection = bpy.data.collections['meshes']
-    psettings = make_particle_settings()
     base_path = pathlib.Path(BASE_FOLDER).resolve()
 
     objects = [obj for obj in mesh_collection.objects.values() if obj.type == 'MESH']
@@ -104,12 +107,18 @@ def main(collection_name):
         prev_position = obj.location.copy()
         prev_rotation = obj.rotation_euler.copy()
 
+        # create bmesh instance
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        areas = np.array([face.calc_area() for face in bm.faces])
+        probs = areas / np.sum(areas)
+
         mesh_collection.objects.unlink(obj)
         main_collection.objects.link(obj)
         
         if bpy.context.active_object != obj: # if not selected
             bpy.context.view_layer.objects.active = obj
-        
         rotations = [generate_random_rotation() for _ in range(ROTATIONS_PER_MESH)]
         rot_file_path = mesh_path.joinpath("rotations.txt")
         with rot_file_path.open('w') as f:
@@ -119,13 +128,15 @@ def main(collection_name):
             obj.rotation_euler = rotation
             rot_path = mesh_path.joinpath(f"rotation_{rot_index}")
             rot_path.mkdir()
-            arrays = sample_mesh(obj,psettings) # create 10 point clouds as np arrays of shape (5000,3)
+            arrays = sample_mesh(obj,bm,probs) # create 10 point clouds as np arrays of shape (5000,3)
             img_path = rot_path.joinpath("normals.png")
             render_and_save_image(str(img_path))
             for arr_index,arr in enumerate(arrays):
                 pth = rot_path.joinpath(f"cloud_{arr_index}")
                 np.save(str(pth),arr)
         
+        bm.free()
+
         # return to original collection and transform
         main_collection.objects.unlink(obj)
         mesh_collection.objects.link(obj)
@@ -133,17 +144,35 @@ def main(collection_name):
         obj.location = prev_position
         obj.rotation_euler = prev_rotation
 
-def clear_particle_settings():
-    objects = [obj for obj in bpy.data.objects.values() if obj.type == 'MESH']
-    for obj in objects:
-        if bpy.context.active_object != obj: # if not selected
-            bpy.context.view_layer.objects.active = obj
-        l = len(obj.particle_systems)
-        for _ in range(l):
-            bpy.ops.object.particle_system_remove()
-    psettings = bpy.data.particles.values()
-    for v in psettings:
-        bpy.data.particles.remove(v)
+
+def clear_temp(): # clear the temp collection
+    temp_col = bpy.data.collections['temp']
+    for obj in temp_col.objects.values():
+        temp_col.objects.remove(obj)
+
+def cloud_debug():
+    obj = bpy.context.active_object
+    global CLOUD_RESEEDS
+    global POINTS
+    CLOUD_RESEEDS = 1
+    POINTS = 500
+    
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    areas = np.array([face.calc_area() for face in bm.faces])
+    probs = areas / np.sum(areas)
+
+    cloud = sample_mesh(obj,bm,probs)[0]
+    bm.free()
+
+    visualize_cloud(cloud,0.01)
+
+def visualize_cloud(cloud,scale):
+    temp_col = bpy.data.collections['temp']
+    for point in cloud:
+        bpy.ops.mesh.primitive_cube_add(location=point,scale=(scale,scale,scale))
+
+
 
 #main('main')
-clear_particle_settings()

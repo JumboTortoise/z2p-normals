@@ -1,4 +1,6 @@
 from networks import *
+import torch.nn.functional as F
+import torch
 
 
 class PosADANet(nn.Module):
@@ -61,19 +63,24 @@ class PosADANet(nn.Module):
         x = torch.cat([x, encoding], dim=1)
 
         x1 = self.inc(x)
-        if self.full_ada:
-            x2 = self.down1(x1)
-            x3 = self.down2(x2)
-            x4 = self.down3(x3)
-            x5 = self.down4(x4)
-        else:
-            x2 = self.down1(x1)
-            x3 = self.down2(x2)
-            x4 = self.down3(x3)
-            x5 = self.down4(x4)
+
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
         x = self.up3(x, x2)
         x = self.up4(x, x1)
         logits = self.outc(x)
         return logits
+
+        """
+        # this part separetes the blue channel (which acts as an alpha) from the red and green
+        #rg,b = torch.split(logits,[2,1],dim=1)
+        #rg = F.tanh(rg) # normalize between -1 and 1
+        #b = (F.tanh(b) + 1)/2 # normalize between 0 and 1
+        #return torch.cat((rg,b),dim=1)
+        """
+

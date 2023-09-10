@@ -5,12 +5,14 @@ from pathlib import Path
 import cv2 as cv
 import torch
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler
 
 import data as data
 import losses
 import util
 from models import PosADANet
-from tqdm import tqdm
+
+import matplotlib.pyplot as plt
 
 losses_funcs = {}
 for val in getmembers(losses):
@@ -38,7 +40,14 @@ def train(opts):
 
     device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
 
-    train_set = data.GenericDataset(opts.data, splat_size=1, cache=False)
+    # mixed precision
+    scaler = None
+    using_mixed_precision = False
+    if torch.cuda.is_available() and opts.mixed_precision:
+        using_mixed_precision = True
+        scaler = GradScaler()
+
+    train_set = data.GenericDataset(opts.data, splat_size=opts.splat_size, cache=opts.cache)
     
     train_loader = DataLoader(train_set, batch_size=opts.batch_size,
                               shuffle=True, num_workers=opts.num_workers, pin_memory=True)
@@ -52,6 +61,8 @@ def train(opts):
     if opts.checkpoint is not None:
         model.load_state_dict(torch.load(opts.checkpoint))
 
+    lfuncs = {lname:get_loss_function(lname) for lname in opts.losses}
+
     optimizer = torch.optim.Adam(model.parameters(), lr=opts.lr)
     global_step = 0
     avg_loss = util.RunningAverage()
@@ -60,27 +71,46 @@ def train(opts):
         print(f"starting epoch {epoch}")
         avg_loss.reset()
         model.train()
-        for i, (img, zbuffer) in tqdm(enumerate(train_loader)):
+        for i, (img, zbuffer) in enumerate(train_loader):
             optimizer.zero_grad()
             
-            print("train:",img.shape,zbuffer.shape)
+            #print("train:",img.shape,zbuffer.shape)
             img: torch.Tensor = img.float().to(device)
             zbuffer: torch.Tensor = zbuffer.float().to(device)
             
+            if using_mixed_precision: # using mixed precision
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    generated = model(zbuffer.float())
+                    loss = 0
+                    for weight, lname in zip(opts.l_weight, opts.losses):
+                        loss += weight * lfuncs[lname](generated, img)
 
-            generated = model(zbuffer.float())
-            loss = 0
-            for weight, lname in zip(opts.l_weight, opts.losses):
-                loss += weight * get_loss_function(lname)(generated, img)
+                    if loss != 0:
+                        scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
+            else:
+                generated = model(zbuffer.float())
+                loss = 0
+                for weight, lname in zip(opts.l_weight, opts.losses):
+                    loss += weight * lfuncs[lname](generated, img)
 
-            if loss != 0:
-                loss.backward()
-                optimizer.step()
+                if loss != 0:
+                    loss.backward()
+                    optimizer.step()
+            generated = generated.float()
 
-            if global_step % opts.log_iter == 0:
+            if global_step % opts.log_iter == 0 or global_step == 50:
+                to_display = 4
                 expanded_z_buffer = zbuffer.repeat((1, 3, 1, 1))
-                expanded_z_buffer[:, -1, :, :] = 1.0
+
+                if generated.shape[0] > to_display:
+                    generated = generated[:to_display,:,:,:]
+                    expanded_z_buffer = expanded_z_buffer[:to_display,:,:,:]
+                    img = img[:to_display,:,:,:]
+                
                 cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
+
                 log_images(train_export_dir, f'train_imgs{global_step}', cat_img.detach())
 
             global_step += 1
@@ -115,7 +145,7 @@ def train(opts):
 
 
 if __name__ == '__main__':
-    command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"""
+    command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 1"""
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=Path)
@@ -133,13 +163,15 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--losses', nargs='+', default=['mse', 'intensity'])
     parser.add_argument('--l_weight', nargs='+', default=[1, 1], type=float)
+    parser.add_argument('--mixed_precision',action='store_true') # added mixed precision support
     parser.add_argument('--tb', action='store_true')
     parser.add_argument('--padding', default='zeros', type=str)
     parser.add_argument('--trans_conv', action='store_true')
     parser.add_argument('--cache', action='store_true')
-    parser.add_argument('--splat_size', type=int)
+    parser.add_argument('--splat_size', type=int,default=1)
     
     command = r"--data C:\data_set --export_dir C:\z2p_normals\models --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"
 
-    train(parser.parse_args(command.split(" ")))
-    #train(parser.parse_args(command))
+
+    #train(parser.parse_args(command.split(" ")))
+    train(parser.parse_args())

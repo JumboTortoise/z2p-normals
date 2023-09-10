@@ -7,7 +7,7 @@ import matcap
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-
+import torch
 """
 def render_point_cloud(point_cloud, focal_length, image_width, image_height):
     # Define the projection matrix based on camera orientation
@@ -51,6 +51,8 @@ def get_image_from_point_cloud(point_cloud, focal_length, image_height, image_wi
      # Apply projection to each point in the point cloud
     
     x = [1,focal_length,focal_length]
+    if torch.is_tensor(point_cloud):
+        x = torch.tensor(x)
 
     point_cloud_projected = point_cloud * x
 
