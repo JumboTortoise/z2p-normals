@@ -1,6 +1,6 @@
 import argparse
 from inspect import getmembers, isfunction
-from pathlib import Path
+from pathlib import Path,PurePath
 
 import cv2 as cv
 import torch
@@ -13,6 +13,7 @@ import util
 from models import PosADANet
 
 import matplotlib.pyplot as plt
+import json
 
 losses_funcs = {}
 for val in getmembers(losses):
@@ -33,17 +34,27 @@ def log_images(path, msg, img_tensor, style = None):
 def get_loss_function(lname):
     return losses_funcs[lname]
 
+class PathEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, PurePath):
+            return str(obj)
+        return json.JSONEncoder.default(obj)
 
 def train(opts):
     run_name =" trial train"
     train_export_dir = opts.export_dir
+    
+    if not opts.test:
+        json_content = json.dumps(vars(opts),cls = PathEncoder,indent=4)
+        with (train_export_dir / "settings.json").open('w') as f:
+            f.write(json_content)
 
     device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
 
     # mixed precision
     scaler = None
     using_mixed_precision = False
-    if torch.cuda.is_available() and opts.mixed_precision:
+    if torch.cuda.is_available() and opts.mixed_precision and not opts.test:
         using_mixed_precision = True
         scaler = GradScaler()
 
@@ -85,7 +96,7 @@ def train(opts):
                     for weight, lname in zip(opts.l_weight, opts.losses):
                         loss += weight * lfuncs[lname](generated, img)
 
-                    if loss != 0:
+                    if not opts.test and loss != 0:
                         scaler.scale(loss).backward()
                         scaler.step(optimizer)
                         scaler.update()
@@ -95,7 +106,7 @@ def train(opts):
                 for weight, lname in zip(opts.l_weight, opts.losses):
                     loss += weight * lfuncs[lname](generated, img)
 
-                if loss != 0:
+                if not opts.test and loss != 0:
                     loss.backward()
                     optimizer.step()
             generated = generated.float()
@@ -138,40 +149,43 @@ def train(opts):
                 cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
                 log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach(), color)
         """
+        #endregion
+        print(f'average loss: {avg_loss.get_average()}')
         
-        print(f'average train loss: {avg_loss.get_average()}')
-
-        torch.save(model.state_dict(), opts.export_dir / f'epoch:{epoch}.pt')
+        if not opts.test:
+            torch.save(model.state_dict(), opts.export_dir / f'epoch:{epoch}.pt')
 
 
 if __name__ == '__main__':
     command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 1"""
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data', type=Path)
-    parser.add_argument('--export_dir', type=Path)
-    #parser.add_argument('--test_data', type=Path)
-    parser.add_argument('--checkpoint', type=Path, default=None)
-    parser.add_argument('--start_epoch', type=int, default=0)
-    parser.add_argument('--batch_size', type=int)
-    #parser.add_argument('--test_batch_size', type=int, default=10)
-    parser.add_argument('--num_workers', type=int)
-    parser.add_argument('--nfreq', type=int, default=20)
-    parser.add_argument('--freq_magnitude', type=int, default=10)
-    parser.add_argument('--log_iter', type=int, default=1000)
-    parser.add_argument('--epochs', type=int)
-    parser.add_argument('--lr', type=float, default=3e-4)
-    parser.add_argument('--losses', nargs='+', default=['mse', 'intensity'])
-    parser.add_argument('--l_weight', nargs='+', default=[1, 1], type=float)
-    parser.add_argument('--mixed_precision',action='store_true') # added mixed precision support
-    parser.add_argument('--tb', action='store_true')
+    parser = argparse.ArgumentParser(
+                    prog='python train.py',
+                    description='This is the training script for z2p-normals, a version of z2p made to visualize normal maps from point clouds',
+                    epilog=f'example command: {"python train.py " + command}')
+    parser.add_argument('--data', type=Path,help='path to the dataset root directory')
+    parser.add_argument('--export_dir', type=Path,help='path to the directory where checkpoints and logs will be kept')
+    parser.add_argument('--test', action='store_true',help='if present, the checkpoint will be tested and not trained')
+    parser.add_argument('--checkpoint', type=Path, default=None, help='path to checkpoint, use to continue training from checkpoint')
+    parser.add_argument('--start_epoch', type=int, default=0,help='epoch to start with, should only be larger then 0 when resuming to train from checkpoint')
+    parser.add_argument('--batch_size', type=int,help='batch size')
+    parser.add_argument('--num_workers', type=int,help='data loader workers')
+    parser.add_argument('--nfreq', type=int, default=20,help='number of fourier feature frequencies')
+    parser.add_argument('--freq_magnitude', type=int, default=10,help='size of the fourier features frequencies range')
+    parser.add_argument('--log_iter', type=int, default=1000,help='the number of iterations to wait before logging new sample images')
+    parser.add_argument('--epochs', type=int,help='number of epochs to train/test')
+    parser.add_argument('--lr', type=float, default=3e-4,help='learning rate')
+    parser.add_argument('--losses', nargs='+', default=['mse', 'intensity'],help='the types of losses that should be used for training/testing')
+    parser.add_argument('--l_weight', nargs='+', default=[1, 1], type=float,help='the weights that should be applied to each loss function, ordered accourding to --losses')
+    parser.add_argument('--mixed_precision',action='store_true',help='train in mixed precision mode') 
     parser.add_argument('--padding', default='zeros', type=str)
-    parser.add_argument('--trans_conv', action='store_true')
-    parser.add_argument('--cache', action='store_true')
-    parser.add_argument('--splat_size', type=int,default=1)
+    parser.add_argument('--trans_conv', action='store_true',help='use transposed convolution instead of bilinear upsampling')
+    parser.add_argument('--cache', action='store_true',help='cache the z-buffers for faster loading(requires a lot of storage)')
+    parser.add_argument('--splat_size', type=int,default=1,help='splat size for z-buffer')
     
-    command = r"--data C:\data_set --export_dir C:\z2p_normals\models --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"
-
-
-    #train(parser.parse_args(command.split(" ")))
-    train(parser.parse_args())
+    opts = parser.parse_args()
+    if opts.test:
+        with torch.no_grad():
+            train(opts)
+    else:
+        train(opts)

@@ -90,7 +90,7 @@ def masked_laplacan_weighted_mse(generated,gt):
     return loss
 
 def preceptual(generated, gt):
-   return __objects['vgg_preceptual'](generated,gt)
+   return __preceptual_loss_obj(generated,gt)
 
 def mse(generated, gt):
     loss = (generated[:, 1:, :, :] - gt[:, 1:, :, :]) ** 2
