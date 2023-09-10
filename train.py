@@ -108,7 +108,7 @@ def train(opts):
                 cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
                 log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach(), color)
         """
-        #endregion
+        
         print(f'average train loss: {avg_loss.get_average()}')
 
         torch.save(model.state_dict(), opts.export_dir / f'epoch:{epoch}.pt')
@@ -117,10 +117,7 @@ def train(opts):
 if __name__ == '__main__':
     command = r"""--data /path/to/dataset --export_dir /where/to/save/checkpoint --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"""
 
-    parser = argparse.ArgumentParser(
-                    prog='python train.py',
-                    description='This is the training script for z2p-normals, a version of z2p made to visualize normal maps from point clouds',
-                    epilog=f'example command: {"python train.py " + command}')
+    parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=Path)
     parser.add_argument('--export_dir', type=Path)
     #parser.add_argument('--test_data', type=Path)
@@ -142,7 +139,7 @@ if __name__ == '__main__':
     parser.add_argument('--cache', action='store_true')
     parser.add_argument('--splat_size', type=int)
     
+    command = r"--data C:\data_set --export_dir C:\z2p_normals\models --batch_size 4 --num_workers 4 --epochs 10 --log_iter 1000 --losses masked_mse intensity masked_pixel_intensity --l_weight 1 0.7 1 --splat_size 3"
 
-
-    #train(parser.parse_args(command.split(" ")))
-    train(parser.parse_args())
+    train(parser.parse_args(command.split(" ")))
+    #train(parser.parse_args(command))

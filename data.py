@@ -151,7 +151,7 @@ def parse_pts(ar, radius=3, dr=(0, 0), const=9):
     """
     res = ar[-1, :-1]
     res = res.astype(int)
-    ar = ar[:-1]
+    ar = ar[::-1]
     x_target, y_target = int(res[0]), int(res[1])
     return scatter(ar[:, 0], ar[:, 1], ar[:, 2], (x_target, y_target), radius=radius, dr=dr, const=const)
 
@@ -191,7 +191,7 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
         if img is None:
                 return None
         ptsD = np.load(str(npy_path))
-        ptsD = get_image_from_point_cloud(ptsD,50,img.shape[0],img.shape[1]) # our preprocessing
+        ptsD = get_image_from_point_cloud(ptsD,50,540,960) # our preprocessing
         print("projected",ptsD.shape)
         z_buffer = parse_pts(ptsD, radius=splat_size, dr=dr)
         print("buffered",z_buffer.shape)
