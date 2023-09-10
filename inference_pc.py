@@ -197,6 +197,7 @@ def apply_matcaps_to_view(opts,z_buffer, generated):
     normals_file = view_dir / 'normals.png'
 
     normals = Image.open(normals_file)
+    normals = np.array(normals)[:, :, :3]
 
     # Create a figure with subplots
     fig, axs = plt.subplots(1 + len(opts.matcap_comparison), 2, figsize=(12, 6))  # Adjust the figsize as needed
@@ -213,7 +214,7 @@ def apply_matcaps_to_view(opts,z_buffer, generated):
         matcap = Image.open(mat)
 
         gen_mat = matcap #apply_matcap_unnormalized(generated, matcap)
-        true_mat = matcap#apply_matcap_unnormalized(normals, matcap)
+        true_mat = apply_matcap_unnormalized(normals, matcap)
 
         axs[i+1,0].imshow(gen_mat)
         axs[i+1,0].axis('off')  # Hide axis for additional images
