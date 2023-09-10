@@ -208,12 +208,7 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
         if img is None:
                 return None
         ptsD = np.load(str(npy_path))
-<<<<<<< HEAD
-        ptsD = get_image_from_point_cloud(ptsD,50,540,960) # our preprocessing
-        print("projected",ptsD.shape)
-=======
         ptsD = get_image_from_point_cloud(ptsD,50,im_height,im_width) # our preprocessing
->>>>>>> 36308052f8824be89d5137229ca0812a4c34f4da
         z_buffer = parse_pts(ptsD, radius=splat_size, dr=dr)
 
     z_buffer = z_buffer[RANGES[0][0]: RANGES[0][1], RANGES[1][0]:RANGES[1][1]]

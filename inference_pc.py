@@ -1,11 +1,10 @@
 import argparse
 import json
-import math
 from pathlib import Path
+import shlex
 from typing import List
 
 import cv2
-import gdown
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
@@ -22,7 +21,6 @@ import render_util
 import util
 from models import PosADANet
 from PIL import Image
-import io
 
 ROOT_PATH = Path(__file__).resolve().absolute().parent
 FRAME_DIRECTORY = Path(__file__).resolve().absolute().parent.joinpath('frames')
@@ -162,7 +160,7 @@ def single(opts):
         im = im.detach().cpu().numpy().astype(np.uint8)
         
         im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB) # for some reason, output is in BGR? 
-
+        
         """
         fig,axis = plt.subplots(nrows=1,ncols=3)
         axis[0].set_title('red')
@@ -178,6 +176,9 @@ def single(opts):
         plt.imshow(im)
         plt.show()
 
+        if opts.matcap_comparison:
+            apply_matcaps_to_view(opts, zbuffer, im)
+
         if opts.matcap is not None:
             
             matcap = apply_matcap_unnormalized(im,Image.open(opts.matcap))
@@ -189,6 +190,49 @@ def single(opts):
         export_results(opts, [f'rendered'], generated)
 
     print('done')
+
+def apply_matcaps_to_view(opts,z_buffer, generated):
+    view_dir = opts.pc.parent
+
+    normals_file = view_dir / 'normals.png'
+
+    normals = Image.open(normals_file)
+
+    # Create a figure with subplots
+    fig, axs = plt.subplots(1 + len(opts.matcap_comparison), 2, figsize=(12, 6))  # Adjust the figsize as needed
+
+    axs[0,0].imshow(normals)
+    axs[0,0].axis('off')  # Hide axis for the first image
+    axs[0,0,].set_title('true normals')
+
+    axs[1,0].imshow(z_buffer.squeeze(), cmap='gray')
+    axs[1,0].axis('off')  # Hide axis for the second image
+    axs[1,0].set_title('z_buffer')
+
+    for i,mat in enumerate(opts.matcap_comparison):
+        matcap = Image.open(mat)
+
+        gen_mat = matcap #apply_matcap_unnormalized(generated, matcap)
+        true_mat = matcap#apply_matcap_unnormalized(normals, matcap)
+
+        axs[i+1,0].imshow(gen_mat)
+        axs[i+1,0].axis('off')  # Hide axis for additional images
+        axs[i+1,0].set_title(f'generated image after matcap')
+
+        axs[i+1,1].imshow(true_mat)
+        axs[i+1,1].axis('off')  # Hide axis for additional images
+        axs[i+1,1].set_title(f'true image after matcap')
+
+
+    # Adjust the layout for better spacing between subplots
+    plt.tight_layout()
+
+    # Show the figure
+    plt.show()
+    
+
+
+
 
 
 if __name__ == '__main__':
@@ -232,10 +276,20 @@ if __name__ == '__main__':
     parser.add_argument('--nfreq', type=int, default=20)
     parser.add_argument('--freq_magnitude', type=int, default=10)
     parser.add_argument('--video',action='store_true')
+    parser.add_argument('--matcap_comparison', type = Path, nargs='+')
     parser.add_argument('--video_batch',type=int,default=4)
 
-    opts = parser.parse_args()
+
+    command = f"--show_results --pc C:/data_set/chair/rotation_1/cloud_0.npy --checkpoint C:/z2p_normals/epoch_9u.pt --export_dir C:/z2p_normals/models --matcap_comparison C:/z2p_normals/z2p-normals/matcaps/basic_side.png C:/z2p_normals/z2p-normals/matcaps/pearl.png"
+    command_args = shlex.split(command)
+
+# Parse the arguments
+    opts = parser.parse_args(command_args)
+
+
     if opts.video:
         video(opts)
     else:
         single(opts)
+
+    
