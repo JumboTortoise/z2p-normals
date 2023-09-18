@@ -42,83 +42,12 @@ def export_results(opts, names: List[str], generated: torch.Tensor):
         cv2.imwrite(str(export_path), o_img)
 
 
-def load_metadata():  # load metadata from the .json file
-    with open(ROOT_PATH / 'models' / 'default_settings.json', 'r') as file:
-        models_meta = json.load(file)
-    return models_meta
-
-
 def load_model_from_checkpoint(opts):
     device = torch.device('cpu')
-    #models_meta = load_metadata()
-    #if opts.model_type not in models_meta.keys():
-    #    raise ValueError(f'no model type {opts.model_type}')
-
-    #num_controls = models_meta[opts.model_type]['len_style']
-    #num_controls = models_meta["regular"]['len_style']
     model = PosADANet(1, 3, padding=opts.padding, bilinear=not opts.trans_conv,
         nfreq=opts.nfreq, magnitude=opts.freq_magnitude).to(device)
     model.load_state_dict(torch.load(opts.checkpoint, map_location=device))
     return model
-
-def clear_frames():
-    files = [pth.resolve() for pth in FRAME_DIRECTORY.iterdir() if pth.is_file() and file.suffix.endswith('png')]
-    for pth in files:
-        pth.unlink()
-
-def video(opts,frames=128):
-    timer = util.timer_factory()
-    device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
-    clear_frames()
-    zbuffers = []
-    with timer('load pc'):
-        pc = torch.tensor(np.load(opts.pc)).float()
-        center = render_util.center_of_mass(pc)
-        for f in range(len(frames)):
-            pc = render_util.rotate_pc(pc,0,0,0.3,pivot=center)
-            zbuffer = parse_pts(get_image_from_point_cloud(pc,opts.focal_length,opts.zbuffer_height,opts.zbuffer_width),radius=opts.splat_size)
-            #zbuffer = zbuffer[opts.width_ranges[0]: opts.width_ranges[1], opts.height_ranges[0]:opts.height_ranges[1]]
-            zbuffer = resize(zbuffer,target=[opts.sampled_width,opts.sampled_height])
-
-            if opts.flip_z:
-                zbuffer = np.flip(zbuffer, axis=0).copy()
-            zbuffer: torch.Tensor = torch.from_numpy(zbuffer).float().to(device)
-
-            zbuffer = zbuffer.unsqueeze(-1).permute(2, 0, 1)
-            zbuffer: torch.Tensor = zbuffer.float().to(device).unsqueeze(0)
-
-            zbuffers.append(zbuffer)
-
-    model = load_model_from_checkpoint(opts).to(device)
-
-    model.eval()
-    f = 0
-    while f < frames:
-        
-        
-        batch = torch.concat(zbuffers[f:f + opts.video_batch],dim=0)
-        
-        with torch.no_grad():
-            generated = model(batch.float())
-
-        for i in range(len(generated)):
-            frame = generated[i]
-            im = frame.permute(1,2,0).clip(0,1)*255
-            im = im.detach().cpu().numpy()
-            cv2.imwrite(FRAME_DIRECTORY / f"frame_{f + i}.png",im)
-        f += len(batch)
-    
-    fps = 30
-    frame_size = (1920, 1080)  # Adjust to your frame dimensions
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Specify the codec (may vary based on your system)
-    video_writer = cv2.VideoWriter(output_video_filename, fourcc, fps, frame_size)
-
-    # Loop through PNG files and add them to the video
-    for png_file in png_files:
-        frame_path = os.path.join(input_directory, png_file)
-        frame = cv2.imread(frame_path)
-        if frame is not None:
-            video_writer.write(frame)
 
 def single(opts):
     timer = util.timer_factory()
@@ -128,6 +57,7 @@ def single(opts):
         pc = torch.tensor(np.load(opts.pc)).float()
         center = render_util.center_of_mass(pc)
         pc = render_util.rotate_pc(pc, opts.rx, opts.ry, opts.rz,pivot=center)
+        pc = render_util.scale_pc(pc,opts.scale,pivot=center)
         zbuffer = parse_pts(get_image_from_point_cloud(pc,opts.focal_length,opts.zbuffer_height,opts.zbuffer_width),radius=opts.splat_size)
         zbuffer = zbuffer[opts.height_ranges[0]: opts.height_ranges[1], opts.width_ranges[0]:opts.width_ranges[1]]
         zbuffer = resize(zbuffer,target=[opts.sampled_width,opts.sampled_height])

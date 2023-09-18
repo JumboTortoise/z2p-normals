@@ -93,12 +93,13 @@ class Shape:
 
 class GenericDataset(Dataset):
     def __init__(self, folder: Path,
-                 splat_size=3, cache=False):
+                 splat_size=3, cache=False,augmentor = None):
         self.folder = Path(folder)
         self.splat_size = splat_size
         self.shape_paths = list(self.folder.iterdir())
         self.shapes = []
         self.cache = cache
+        self.augmentor = augmentor if not augmentor.is_null() else None
         # read all shapes with positive amount of views
         for s in self.shape_paths:
             t_shape = Shape(s)
@@ -116,7 +117,7 @@ class GenericDataset(Dataset):
         # map between global index to a specific example in a specific shape
         shape_index, item_index = self.inverter[item]
         img_path, z_buffer_path = self.shapes[shape_index][item_index]
-        rtn = load_files(img_path, z_buffer_path, splat_size=self.splat_size, cache=self.cache)
+        rtn = load_files(img_path, z_buffer_path, splat_size=self.splat_size, cache=self.cache,augmentor=self.augmentor)
         if rtn is None:
             return self.__getitem__(0)
 
@@ -153,12 +154,12 @@ def parse_pts(ar, radius=3, dr=(0, 0), const=9):
     """
     res = ar[-1, :-1]
     res = res.astype(int)
-    ar = ar[::-1]
+    ar = ar[:-1]
     x_target, y_target = int(res[0]), int(res[1])
     return scatter(ar[:, 0], ar[:, 1], ar[:, 2], (x_target, y_target), radius=radius, dr=dr, const=const)
 
 
-def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
+def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0),augmentor=None):
     """
     load a png target and render a z_buffer from an npy_path
     :param png_path: path to the png target image
@@ -201,6 +202,8 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
             if img is None:
                 return None
             ptsD = np.load(str(npy_path))
+            if augmentor is not None and not augmentor.is_null(): # augmentation logic
+                ptsD = augmentor(ptsD)
             ptsD = get_image_from_point_cloud(ptsD,50,im_height,im_width) # our preprocessing
             z_buffer = parse_pts(ptsD, radius=splat_size)
             np.save(cache_path, z_buffer)
@@ -208,12 +211,9 @@ def load_files(png_path, npy_path, splat_size=5, cache=True, dr=(0, 0)):
         if img is None:
                 return None
         ptsD = np.load(str(npy_path))
-<<<<<<< HEAD
-        ptsD = get_image_from_point_cloud(ptsD,50,540,960) # our preprocessing
-        print("projected",ptsD.shape)
-=======
+        if augmentor is not None and not augmentor.is_null():
+            ptsD = augmentor(ptsD)
         ptsD = get_image_from_point_cloud(ptsD,50,im_height,im_width) # our preprocessing
->>>>>>> 36308052f8824be89d5137229ca0812a4c34f4da
         z_buffer = parse_pts(ptsD, radius=splat_size, dr=dr)
 
     z_buffer = z_buffer[RANGES[0][0]: RANGES[0][1], RANGES[1][0]:RANGES[1][1]]

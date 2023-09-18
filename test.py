@@ -16,6 +16,7 @@ import augmentation
 import matplotlib.pyplot as plt
 import json
 import torchinfo
+from tqdm import tqdm
 
 losses_funcs = {}
 for val in getmembers(losses):
@@ -23,9 +24,7 @@ for val in getmembers(losses):
         losses_funcs[val[0]] = val[1]
 
 
-def log_images(path, msg, img_tensor, style = None):
-    # img_tensor = util.embed_color(img_tensor, style[:, :3])
-    # white_img = util.embed_background(img_tensor)
+def log_images(path, msg, img_tensor):
     for i, img in enumerate(img_tensor):
         img = img.permute(1, 2, 0)
         img = img.clip(0, 1) * 255
@@ -52,22 +51,7 @@ def train(opts):
 
     device = torch.device(torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu'))
     
-    # mixed precision
-    scaler = None
-    using_mixed_precision = False
-    if torch.cuda.is_available() and opts.mixed_precision:
-        using_mixed_precision = True
-        scaler = GradScaler()
-
     augmentor = augmentation.Augmentor(opts.aug_passes)
-    """
-    if opts.aug_dx is not None:
-        augmentor.add_augmentor('dx',opts.aug_dx,augmentation.translate_x)
-    if opts.aug_dy is not None:
-        augmentor.add_augmentor('dy',opts.aug_dy,augmentation.translate_y)
-    if opts.aug_scale is not None:
-        augmentor.add_augmentor('scale',opts.aug_scale,augmentation.scale)
-    """
     if opts.aug_noise is not None:
         augmentor.add_augmentor('noise',opts.aug_noise,augmentation.noise)
     if opts.aug_null is not None:
@@ -83,7 +67,6 @@ def train(opts):
                               shuffle=True, num_workers=opts.num_workers, pin_memory=True)
     
 
-    num_samples = len(train_loader)
     model = PosADANet(input_channels=1, output_channels=3,
                       padding=opts.padding, bilinear=not opts.trans_conv,
                       nfreq=opts.nfreq, magnitude=opts.freq_magnitude).to(device)
@@ -102,83 +85,31 @@ def train(opts):
         print(f"starting epoch {epoch}")
         avg_loss.reset()
         model.train()
-        for i, (img, zbuffer) in enumerate(train_loader):
-            if opts.arch and not arch_shown:
-                print("dumping model architecture:")
-                torchinfo.summary(model, input_size=zbuffer.shape)
-                arch_shown = True
+        if opts.arch and not arch_shown:
+            print("dumping model architecture:")
+            torchinfo.summary(model, input_size=zbuffer.shape)
+            arch_shown = True
 
-            optimizer.zero_grad()
-            
-            #print("train:",img.shape,zbuffer.shape)
-            img: torch.Tensor = img.float().to(device)
-            zbuffer: torch.Tensor = zbuffer.float().to(device)
-            
-            if using_mixed_precision: # using mixed precision
-                with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    generated = model(zbuffer.float())
-                    loss = 0
-                    for weight, lname in zip(opts.l_weight, opts.losses):
-                        loss += weight * lfuncs[lname](generated, img)
-
-                    if loss != 0:
-                        scaler.scale(loss).backward()
-                        scaler.step(optimizer)
-                        scaler.update()
-            else:
-                generated = model(zbuffer.float())
-                loss = 0
-                for weight, lname in zip(opts.l_weight, opts.losses):
-                    loss += weight * lfuncs[lname](generated, img)
-
-                if loss != 0:
-                    loss.backward()
-                    optimizer.step()
-            generated = generated.float()
-
-            if global_step % opts.log_iter == 0 or global_step == 50:
-                to_display = 4
-                expanded_z_buffer = zbuffer.repeat((1, 3, 1, 1))
-
-                if generated.shape[0] > to_display:
-                    generated = generated[:to_display,:,:,:]
-                    expanded_z_buffer = expanded_z_buffer[:to_display,:,:,:]
-                    img = img[:to_display,:,:,:]
-                
-                cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
-
-                log_images(train_export_dir, f'train_imgs{global_step}', cat_img.detach())
-
-            global_step += 1
-
-            avg_loss.add(loss.item())
-            print(f'{run_name}; epoch: {epoch}; iter: {i}/{num_samples} loss: {loss}')
-
-        """
-        region test
         model.eval()
         avg_test_loss.reset()
-        for i, (img, zbuffer, color) in enumerate(test_loader):
+        for i, (img, zbuffer) in tqdm(enumerate(test_loader)):
             with torch.no_grad():
                 zbuffer = zbuffer.float().to(device)
-                color = color.float().to(device)
                 img = img.float().to(device)
-                generated = model(zbuffer.float(), color)
+                generated = model(zbuffer.float())
                 test_loss = 0
                 for weight, lname in zip(opts.l_weight, opts.losses):
-                    test_loss += weight * get_loss_function(lname)(generated, img)
+                    test_loss += weight * lfuncs[lname](generated, img)
                 avg_test_loss.add(test_loss.item())
+                if global_step % log_iter == 0:
+                    expanded_z_buffer = zbuffer.repeat((1, 4, 1, 1))
+                    expanded_z_buffer[:, -1, :, :] = 1
+                    cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
+                    log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach())
+                global_step += 1
 
-                expanded_z_buffer = zbuffer.repeat((1, 4, 1, 1))
-                expanded_z_buffer[:, -1, :, :] = 1
-                cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
-                log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach(), color)
-        """
-        #endregion
         print(f'average loss: {avg_loss.get_average()}')
         
-        torch.save(model.state_dict(), opts.export_dir / f'epoch:{epoch}.pt')
-
 
 if __name__ == '__main__':
     command = r"""--data /path/to/dataset --export-dir /where/to/save/checkpoint --batch-size 4 --num-workers 4 --epochs 10 --log-iter 1000 --losses masked_mse intensity masked_pixel_intensity --l-weight 1 0.7 1 --splat-size 1"""
@@ -200,7 +131,6 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=3e-4,help='learning rate')
     parser.add_argument('--losses', nargs='+', default=['mse', 'intensity'],help='the types of losses that should be used for training/testing')
     parser.add_argument('--l-weight',dest='l_weight', nargs='+', default=[1, 1], type=float,help='the weights that should be applied to each loss function, ordered accourding to --losses')
-    parser.add_argument('--mixed-precision',dest='mixed_precision',action='store_true',help='train in mixed precision mode') 
     parser.add_argument('--padding', default='zeros', type=str)
     parser.add_argument('--trans-conv',dest='trans_conv', action='store_true',help='use transposed convolution instead of bilinear upsampling')
     parser.add_argument('--cache', action='store_true',help='cache the z-buffers for faster loading(requires a lot of storage)')
@@ -209,11 +139,6 @@ if __name__ == '__main__':
     # dump network architecture
     parser.add_argument('--arch',action='store_true',help='print the architecture of the model before training start')
     #augmentations
-    """
-    parser.add_argument('--aug-dx',dest='aug_dx',type=float,help='weight of dx augmentation',default=None)
-    parser.add_argument('--aug-dy',dest='aug_dy',type=float,help='weight of dy augmentation',default=None)
-    parser.add_argument('--aug-scale',dest='aug_scale',type=float,help='weight of scale augmentation',default=None)
-    """
     parser.add_argument('--aug-noise',dest='aug_noise',type=float,help='weight of noise augmentation',default=None)
     parser.add_argument('--aug-null',dest='aug_null',type=float,help='weight of null augmentation',default=None)
     parser.add_argument('--aug-passes',dest='aug_passes',type=int,help='number of augmentations per point cloud',default=2)

@@ -1,7 +1,7 @@
 import math
 
 import torch
-
+import numpy as np
 import data
 
 world_mat_object = torch.tensor([
@@ -51,6 +51,14 @@ def generate_roation(phi_x, phi_y, phi_z):
     return Rz(phi_z) @ Ry(phi_y) @ Rx(phi_x)
 
 
+def scale_pc(pc,scale,pivot=None):
+    if pivot is not None:
+        pc -= pivot
+    pc *= scale
+    if pivot is not None:
+        pc += pivot
+    return pc
+
 def rotate_pc(pc, rx, ry, rz , pivot=None):
     if pivot is not None:
         pc -= pivot
@@ -63,7 +71,7 @@ def rotate_pc(pc, rx, ry, rz , pivot=None):
         return pc + pivot
     return rotated
 
-
+"""
 def draw_pc(pc: torch.Tensor, res=(540, 960), radius=5, timer=None, dy=0, scale=1):
     xyz = pc[:, :3]
     xyz -= xyz.mean(dim=0)
@@ -108,3 +116,4 @@ def draw_pc(pc: torch.Tensor, res=(540, 960), radius=5, timer=None, dy=0, scale=
     z_buffer = z_buffer[:, data.RANGES[1][0]:data.RANGES[1][1]]
     z_buffer = data.resize(z_buffer)
     return z_buffer
+"""
