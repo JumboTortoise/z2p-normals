@@ -38,6 +38,7 @@ class PosADANet(nn.Module):
         self.omega.requires_grad = False
         self.positional_encoding = None
         self.full_ada = full_ada
+        self.nfreq = nfreq
         
 
         
@@ -59,8 +60,9 @@ class PosADANet(nn.Module):
 
     def forward(self, x):
         #w = self.style_encoder(style)
-        encoding = self.get_encoding(x)
-        x = torch.cat([x, encoding], dim=1)
+        if self.nfreq > 0:
+            encoding = self.get_encoding(x)
+            x = torch.cat([x, encoding], dim=1)
 
         x1 = self.inc(x)
 

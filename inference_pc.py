@@ -23,7 +23,6 @@ from models import PosADANet
 from PIL import Image
 
 ROOT_PATH = Path(__file__).resolve().absolute().parent
-FRAME_DIRECTORY = Path(__file__).resolve().absolute().parent.joinpath('frames')
 torch.manual_seed(10)
 
 
@@ -63,10 +62,7 @@ def single(opts):
     if opts.flip_z:
         zbuffer = np.flip(zbuffer, axis=0).copy()
 
-    if opts.show_results:
-        plt.title("z-buffer")
-        plt.imshow(zbuffer,cmap='gray')
-        plt.show()
+    original_zbuffer = zbuffer
     zbuffer: torch.Tensor = torch.from_numpy(zbuffer).float().to(device)
 
     zbuffer = zbuffer.unsqueeze(-1).permute(2, 0, 1)
@@ -74,9 +70,9 @@ def single(opts):
     
     # creates export directory (if it does not exist) and zbuffer
     export_results_flag = opts.export_dir is not None 
-    if export_results_flag:
-        opts.export_dir.mkdir(exist_ok=True, parents=True)
-        export_results(opts, [f'zbuffer'], zbuffer.detach())
+    #if export_results_flag:
+    #    opts.export_dir.mkdir(exist_ok=True, parents=True)
+    #    export_results(opts, [f'zbuffer'], zbuffer.detach())
 
     model = load_model_from_checkpoint(opts).to(device)
 
@@ -85,105 +81,55 @@ def single(opts):
     with torch.no_grad():
         generated = model(zbuffer.float())
 
+    im = generated[0].permute(1,2,0).clip(0,1)*255
+    im = im.detach().cpu().numpy().astype(np.uint8)
+    im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)  
+    
+    matcap = None
+    if opts.matcap is not None:
+        m = np.array(Image.open(opts.matcap).convert("RGB"))
+        matcap = apply_matcap_unnormalized(im,m)
+
+    # show the results
     if opts.show_results:
-        im = generated[0].permute(1,2,0).clip(0,1)*255
-        im = im.detach().cpu().numpy().astype(np.uint8)
-        
-        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB) # for some reason, output is in BGR? 
-        
-        """
-        fig,axis = plt.subplots(nrows=1,ncols=3)
-        axis[0].set_title('red')
-        axis[0].imshow(im[:,:,0])
-        axis[1].set_title('green')
-        axis[1].imshow(im[:,:,1])
-        axis[2].set_title('blue')
-        axis[2].imshow(im[:,:,-1])
+        plt.title("z-buffer")
+        plt.imshow(original_zbuffer,cmap='gray')
         plt.show()
-        """
-        
         plt.title("generated")
         plt.imshow(im)
         plt.show()
-
-        if opts.matcap_comparison:
-            apply_matcaps_to_view(opts, zbuffer, im)
-
-        if opts.matcap is not None:
-            
-            matcap = apply_matcap_unnormalized(im,Image.open(opts.matcap))
+        if matcap is not None:
             plt.title("matcap")
             plt.imshow(matcap)
             plt.show()
-    
+
+    # export results
     if export_results_flag:
-        export_results(opts, [f'rendered'], generated)
+        export_results(opts, [f'zbuffer'], zbuffer)
+        export_results(opts, [f'normal'], generated)
+        if matcap is not None:
+            export_results(opts, [f'rendered'], torch.tensor(cv2.cvtColor(matcap, cv2.COLOR_RGB2BGR)).permute(2,0,1).unsqueeze(0)/255)
 
     print('done')
 
-def apply_matcaps_to_view(opts,z_buffer, generated):
-    view_dir = opts.pc.parent
-
-    normals_file = view_dir / 'normals.png'
-
-    normals = Image.open(normals_file)
-    normals = np.array(normals)[:, :, :3]
-
-    # Create a figure with subplots
-    fig, axs = plt.subplots(1 + len(opts.matcap_comparison), 2, figsize=(12, 6))  # Adjust the figsize as needed
-
-    axs[0,0].imshow(normals)
-    axs[0,0].axis('off')  # Hide axis for the first image
-    axs[0,0,].set_title('true normals')
-
-    axs[1,0].imshow(z_buffer.squeeze(), cmap='gray')
-    axs[1,0].axis('off')  # Hide axis for the second image
-    axs[1,0].set_title('z_buffer')
-
-    for i,mat in enumerate(opts.matcap_comparison):
-        matcap = Image.open(mat)
-
-        gen_mat = matcap #apply_matcap_unnormalized(generated, matcap)
-        true_mat = apply_matcap_unnormalized(normals, matcap)
-
-        axs[i+1,0].imshow(gen_mat)
-        axs[i+1,0].axis('off')  # Hide axis for additional images
-        axs[i+1,0].set_title(f'generated image after matcap')
-
-        axs[i+1,1].imshow(true_mat)
-        axs[i+1,1].axis('off')  # Hide axis for additional images
-        axs[i+1,1].set_title(f'true image after matcap')
-
-
-    # Adjust the layout for better spacing between subplots
-    plt.tight_layout()
-
-    # Show the figure
-    plt.show()
-    
-
-
-
-
-
 if __name__ == '__main__':
-    sample_command = "python inference_pc.py --show_results --pc /path/to/cloud.npy --checkpoint /path/to/model.pt --export_dir /where/to/save"
+    sample_command = "python inference_pc.py --show-results --pc /path/to/cloud.npy --checkpoint /path/to/model.pt --export-dir /where/to/save"
     parser = argparse.ArgumentParser(
         prog='get single frame or video visualization of point cloud',
         epilog=f'example command: {"python inference_pc.py " + sample_command}')
-    parser.add_argument('--export_dir', type=Path, default=None, required=False,
+    parser.add_argument('--export-dir',dest='export_dir', type=Path, default=None, required=False,
                         help='path to export directory, if blank dont save')
 
-    parser.add_argument('--focal_length',type=int,default=50)
-    parser.add_argument('--zbuffer_width',type=int,default=960)
-    parser.add_argument('--zbuffer_height',type=int,default=540)
-    parser.add_argument('--width_ranges',type=int,nargs=2,default=[100, 960])
-    parser.add_argument('--height_ranges',type=int,nargs=2,default=[0, 540])
-    parser.add_argument('--sampled_width',type=int,default=500)
-    parser.add_argument('--sampled_height',type=int,default=-1)
+    parser.add_argument('--focal-length',dest='focal_length',type=int,default=50)
+    parser.add_argument('--zbuffer-width',dest='zbuffer_width',type=int,default=960)
+    parser.add_argument('--zbuffer-height',dest='zbuffer_height',type=int,default=540)
+    parser.add_argument('--width-ranges',dest='width_ranges',type=int,nargs=2,default=[100, 960])
+    parser.add_argument('--height-ranges',dest='height_ranges',type=int,nargs=2,default=[0, 540])
+    parser.add_argument('--sampled-width',dest='sampled_width',type=int,default=500)
+    parser.add_argument('--sampled-height',dest='sampled_height',type=int,default=-1)
 
     parser.add_argument('--pc', type=Path, required=True, help='path to input point cloud to visualize')
-    parser.add_argument('--trans_conv', action='store_true',
+    parser.add_argument('--trans-conv',dest='trans_conv', action='store_true',
                         help='use a model with transconv instead of bilinear upsampling')
     parser.add_argument('--padding', default='zeros', type=str, required=False, help='padding type for the model')
     parser.add_argument('--scale', default=1.0, type=float, required=False,
@@ -194,7 +140,7 @@ if __name__ == '__main__':
                         help='rotation on the input pc around the y axis')
     parser.add_argument('--rz', default=2.0, type=float, required=False,
                         help='rotation on the input pc around the z axis')
-    parser.add_argument('--flip_z', action='store_true', help='flip the z axis')
+    parser.add_argument('--flip-z',dest='flip_z', action='store_true', help='flip the z axis')
     parser.add_argument('--dy', default=290, type=int, required=False,
                         help='translation of the input pc in the vertical direction of the image')
     parser.add_argument('--checkpoint', type=Path, required=True,
@@ -202,23 +148,11 @@ if __name__ == '__main__':
                              ' if None a pretrained model will be downloaded from gdrive according to --model_type')
     parser.add_argument('--matcap',type=Path,default=None,required=False,
                         help='a matcap to apply to rendered normal map')
-    parser.add_argument('--show_results', action='store_true', help='show results with matplotlib')
-    parser.add_argument('--splat_size',type=int,default=1)
+    parser.add_argument('--show-results',dest='show_results', action='store_true', help='show results with matplotlib')
+    parser.add_argument('--splat-size',dest='splat_size',type=int,default=1)
     parser.add_argument('--nfreq', type=int, default=20)
-    parser.add_argument('--freq_magnitude', type=int, default=10)
-    parser.add_argument('--video',action='store_true')
-    parser.add_argument('--matcap_comparison', type = Path, nargs='+')
-    parser.add_argument('--video_batch',type=int,default=4)
+    parser.add_argument('--freq-magnitude',dest='freq_magnitude', type=int, default=10)
 
 
-    command = f"--show_results --pc C:/data_set/chair/rotation_1/cloud_0.npy --checkpoint C:/z2p_normals/epoch_9u.pt --export_dir C:/z2p_normals/models --matcap_comparison C:/z2p_normals/z2p-normals/matcaps/basic_side.png C:/z2p_normals/z2p-normals/matcaps/pearl.png"
-    command_args = shlex.split(command)
-
-# Parse the arguments
-    opts = parser.parse_args(command_args)
-
-
-    if opts.video:
-        video(opts)
-    else:
-        single(opts)
+    opts = parser.parse_args()
+    single(opts)

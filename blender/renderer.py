@@ -1,30 +1,5 @@
 """
-This script is meant to run from within blender to 
-automatically generate the dataset
-
-20 unique meshes, contained in a 'meshes' collection,
-assigned the spacial normal-visualizing material(so that a normal map can be rendered)
-the rendering engine is EeVee(since no realistic lighting is required, only normals)
-
-for mesh in meshes:
-    generate 10 randomly sampled point clouds
-    for cloud in point_clouds:
-        generate 400 randomly sampled 3D rotations
-        for rotation in random_rotations:
-            render image EeVee, using applied rotation 
-
-
-scene structure:
-collection "meshes": contains the 20 training meshes
-collection "main": contains camera and currently rendered object
-
-directory structure:
-./dataset/ parent directory
-./dataset/object_name, a sub directory for every one of the meshes
-./dataset/object_name/clouds.npy , a file containing 10 point clouds, 5k points each
-./dataset/object_name/point_cloud_1, 10 subdirectories, one for each for each point cloud, 
-    containing numbered, rendered normal maps in PNG format
-./dataset/object_name/point_cloud_1/rotations.txt , a text file containig the euler rotation for each normal map
+renderer version with augmentation enabled
 """
 import bpy
 import time
@@ -38,6 +13,46 @@ POINTS = 5000
 BASE_FOLDER = '/hdd/Datasets/normals/'
 CLOUD_RESEEDS = 10
 ROTATIONS_PER_MESH = 100
+MESH_COLLECTION_NAME = 'meshes'
+
+# augmentation weights
+DX_AUG_WEIGHT = 0.1
+DY_AUG_WEIGHT = 0.1
+SCALE_AUG_WEIGHT = 0.2
+NULL_AUG_WEIGHT = 0.6
+# augmentation passes
+AUG_PASSES = 2
+AUG_ENABLED = True
+# other augmentation variables
+DX_AUG_RANGE = [-0.2,0.2]
+DY_AUG_RANGE = [-0.2,0.2]
+SCALE_AUG_RANGE = [0.7,1.2]
+
+def aug_null(obj):
+    pass
+
+def aug_dx(obj):
+    dx = np.random.uniform(DX_AUG_RANGE[0],DX_AUG_RANGE[1])
+    obj.location.y += dx # this is NOT a mistake
+
+
+def aug_dy(obj):
+    dy = np.random.uniform(DY_AUG_RANGE[0],DY_AUG_RANGE[1])
+    obj.location.z += dy # this is NOT a mistake
+
+def aug_scale(obj):
+    scale = np.random.uniform(SCALE_AUG_RANGE[0],SCALE_AUG_RANGE[1])
+    obj.scale = (scale,scale,scale)
+
+def reset_object(obj):
+    obj.scale = (1,1,1)
+    obj.location = (0,0,0)
+
+def augment_object(obj):
+    for _ in range(AUG_PASSES):
+        func = random.choices([aug_dx,aug_dy,aug_scale,aug_null],
+            weights=[DX_AUG_WEIGHT,DY_AUG_WEIGHT,SCALE_AUG_WEIGHT,NULL_AUG_WEIGHT],k=1)[0]
+        func(obj)
 
 def render_and_save_image(path):    
     bpy.context.scene.render.engine = 'BLENDER_EEVEE'
@@ -82,13 +97,13 @@ def sample_mesh(obj,bm,probs):
     """
     samples some points from a mesh
     """
+    clouds = []
     bpy.context.view_layer.update()
     mat = obj.matrix_world # matrix that moves the particle position from object coordinates to world coordinates
-    clouds = []
     camera_location = np.array(list(bpy.data.objects["Camera"].location))
     selected_face_indices = np.random.choice(len(probs),size=POINTS,replace=True,p=probs)
 
-    for i in range(CLOUD_RESEEDS): 
+    for i in range(CLOUD_RESEEDS):
         points = np.array([list(mat @ sample_triangular_face(bm.faces[j])) for j in selected_face_indices])
         points = points - camera_location
         clouds.append(points)
@@ -96,7 +111,7 @@ def sample_mesh(obj,bm,probs):
 
 def main(collection_name):
     main_collection = bpy.data.collections[collection_name]
-    mesh_collection = bpy.data.collections['meshes']
+    mesh_collection = bpy.data.collections[MESH_COLLECTION_NAME]
     base_path = pathlib.Path(BASE_FOLDER).resolve()
 
     objects = [obj for obj in mesh_collection.objects.values() if obj.type == 'MESH']
@@ -128,9 +143,13 @@ def main(collection_name):
             obj.rotation_euler = rotation
             rot_path = mesh_path.joinpath(f"rotation_{rot_index}")
             rot_path.mkdir()
+            if AUG_ENABLED:
+                augment_object(obj)
             arrays = sample_mesh(obj,bm,probs) # create 10 point clouds as np arrays of shape (5000,3)
             img_path = rot_path.joinpath("normals.png")
             render_and_save_image(str(img_path))
+            if AUG_ENABLED:
+                reset_object(obj)
             for arr_index,arr in enumerate(arrays):
                 pth = rot_path.joinpath(f"cloud_{arr_index}")
                 np.save(str(pth),arr)

@@ -107,7 +107,7 @@ def train(opts):
                 print("dumping model architecture:")
                 torchinfo.summary(model, input_size=zbuffer.shape)
                 arch_shown = True
-
+            print(zbuffer.shape)
             optimizer.zero_grad()
             
             #print("train:",img.shape,zbuffer.shape)
@@ -154,26 +154,6 @@ def train(opts):
             avg_loss.add(loss.item())
             print(f'{run_name}; epoch: {epoch}; iter: {i}/{num_samples} loss: {loss}')
 
-        """
-        region test
-        model.eval()
-        avg_test_loss.reset()
-        for i, (img, zbuffer, color) in enumerate(test_loader):
-            with torch.no_grad():
-                zbuffer = zbuffer.float().to(device)
-                color = color.float().to(device)
-                img = img.float().to(device)
-                generated = model(zbuffer.float(), color)
-                test_loss = 0
-                for weight, lname in zip(opts.l_weight, opts.losses):
-                    test_loss += weight * get_loss_function(lname)(generated, img)
-                avg_test_loss.add(test_loss.item())
-
-                expanded_z_buffer = zbuffer.repeat((1, 4, 1, 1))
-                expanded_z_buffer[:, -1, :, :] = 1
-                cat_img = torch.cat([img, generated, expanded_z_buffer.clamp(0, 1)], dim=2)
-                log_images(test_export_dir, f'pairs_epoch_{epoch}', cat_img.detach(), color)
-        """
         #endregion
         print(f'average loss: {avg_loss.get_average()}')
         
@@ -181,7 +161,7 @@ def train(opts):
 
 
 if __name__ == '__main__':
-    command = r"""--data /path/to/dataset --export-dir /where/to/save/checkpoint --batch-size 4 --num-workers 4 --epochs 10 --log-iter 1000 --losses masked_mse intensity masked_pixel_intensity --l-weight 1 0.7 1 --splat-size 1"""
+    command = r"""--data /path/to/dataset --export-dir /where/to/save/checkpoint --batch-size 4 --num-workers 4 --epochs 10 --log-iter 1000 --losses masked_mse intensity masked_pixel_intensity masked_laplacan_weighted_mse --l-weight 1 0.7 1 1.2 --splat-size 1"""
 
     parser = argparse.ArgumentParser(
                     prog='python train.py',
@@ -191,8 +171,8 @@ if __name__ == '__main__':
     parser.add_argument('--export-dir',dest='export_dir', type=Path,help='path to the directory where checkpoints and logs will be kept')
     parser.add_argument('--checkpoint', type=Path, default=None, help='path to checkpoint, use to continue training from checkpoint')
     parser.add_argument('--start-epoch',dest='start_epoch', type=int, default=0,help='epoch to start with, should only be larger then 0 when resuming to train from checkpoint')
-    parser.add_argument('--batch-size',dest='batch_size', type=int,help='batch size')
-    parser.add_argument('--num-workers',dest='num_workers', type=int,help='data loader workers')
+    parser.add_argument('--batch-size',dest='batch_size',default=4, type=int,help='batch size')
+    parser.add_argument('--num-workers',dest='num_workers',default=4, type=int,help='data loader workers')
     parser.add_argument('--nfreq', type=int, default=20,help='number of fourier feature frequencies')
     parser.add_argument('--freq-magnitude',dest='freq_magnitude', type=int, default=10,help='size of the fourier features frequencies range')
     parser.add_argument('--log-iter',dest='log_iter', type=int, default=1000,help='the number of iterations to wait before logging new sample images')

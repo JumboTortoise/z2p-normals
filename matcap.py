@@ -1,6 +1,7 @@
 import numpy as np
 from PIL import Image
-import sys
+import argparse
+from pathlib import Path
 import time
 
 THRESHOLD = 1
@@ -23,6 +24,8 @@ def create_alpha(image):
 
 def apply_matcap_unnormalized(result,matcap):
     """
+    NOTE: the matcap must be an RGB image, with no alpha channel
+    
     result is assumed to be the output of the network, that is, an RGB image with 2 channels of normals
     and 1 alpha channel (the blue channel). The normals will be normalized to between -1 and 1, and the alpha 
     between -1 and 1.
@@ -33,7 +36,6 @@ def apply_matcap_unnormalized(result,matcap):
     and the BLUE channel contains alpha - a max value of 255 for forground object, and 0 for background
     (where there are no normals)
     """
-    matcap = matcap.convert("RGB")
     result = np.array(result)
     matcap = np.array(matcap)
     matcap_size = len(matcap)
@@ -50,21 +52,14 @@ def apply_matcap_unnormalized(result,matcap):
 
 
 if __name__ == '__main__':
-    img = Image.open(sys.argv[1])
-    matcap = Image.open(sys.argv[2])
-    #img = img.resize((196, 128))
-    TIME = 4
+    parser = argparse.ArgumentParser("this script applies a matcap to a normal map")
+    parser.add_argument("target",type=Path,help='the target normal map')
+    parser.add_argument("matcap",type=Path,help='the matcap to apply')
+    args = parser.parse_args()
+    img = Image.open(args.target)
+    matcap = Image.open(args.matcap)
 
-    #img.show()
-    #time.sleep(TIME)
-    #matcap.show()
-    #time.sleep(TIME)
-
-    nmap = create_alpha(img)
-    #nmap.split()[2].show()
-    #time.sleep(TIME)
-
-    final = apply_matcap_unnormalized(nmap,matcap)
-    final.show()
+    final = apply_matcap_unnormalized(img,matcap)
+    Image.fromarray(final).show()
     
     
