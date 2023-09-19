@@ -15,7 +15,7 @@ If you wish to use the ***cache option*** at train time please space for around 
 This will save the 2D point cloud z-buffers to disk and allow for faster training. 
 
 All the datasets and pretrained checkpoints are available in [this](https://drive.google.com/drive/u/1/folders/1WOLzSjL7GS3M9YbbMzg8xIsXxfNXVKg-) google drive directory
-(Like this repo, it is private, contact us if you require permissions).
+(it is private, contact us if you require permissions).
 
 ## Training
 
